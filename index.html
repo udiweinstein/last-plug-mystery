@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>תעלומת הפלאג האחרון – המשחק</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cousine:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#050b05; --ph:#7dff7a; --dim:#3f9f3d; --amber:#ffc857; --white:#eaffea; --red:#ff7a6b; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html,body { margin:0; height:100%; background:#000; }
+  body { color:var(--ph); font-family:"Cousine","Courier New",monospace; font-size:clamp(15px,3.9vw,18px); line-height:1.6; }
+  #wrap { height:100dvh; max-width:860px; margin:0 auto; display:flex; flex-direction:column; background:var(--bg); position:relative; }
+  #wrap::after { content:""; position:absolute; inset:0; pointer-events:none; background:repeating-linear-gradient(to bottom,transparent 0 2px,#0004 2px 3px); }
+  header { display:flex; justify-content:space-between; gap:10px; padding:8px 14px; border-bottom:1px solid #1d3a1c; color:var(--dim); font-size:.82em; }
+  #pic { display:block; flex:none; width:min(calc(100% - 20px), calc(32dvh * 1.4583), 470px); height:auto; aspect-ratio:280/192; margin:8px auto 0; background:var(--bg); border:1px solid #1d3a1c; image-rendering:crisp-edges; image-rendering:pixelated; filter:drop-shadow(0 0 3px #3fff3a77); }
+  #out { flex:1; overflow-y:auto; padding:14px 14px 6px; text-shadow:0 0 6px #3fff3a66; overscroll-behavior:contain; }
+  #out p { margin:0 0 .7em; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .you { color:var(--white); }
+  .you::before { content:"> "; color:var(--dim); }
+  .say { color:var(--amber); text-shadow:0 0 6px #ffc85755; }
+  .sys { color:var(--dim); }
+  .big { color:var(--white); font-weight:700; font-size:1.15em; }
+  .wa { color:#9fd6ff; text-shadow:0 0 6px #6fb8ff55; }
+  .ltr { direction:ltr; text-align:left; color:var(--amber); font-weight:700; letter-spacing:.06em; }
+  .err { color:var(--red); }
+  #keys { display:flex; gap:6px; padding:6px 10px 0; flex-wrap:wrap; }
+  #keys button { all:unset; cursor:pointer; border:1px solid #2c5a2a; color:var(--dim); padding:4px 10px; border-radius:3px; font-size:.82em; }
+  #keys button:hover { color:var(--ph); border-color:var(--dim); }
+  #keys button:focus-visible, #in:focus-visible { outline:2px solid var(--ph); outline-offset:2px; }
+  form { display:flex; align-items:center; gap:8px; padding:8px 12px calc(10px + env(safe-area-inset-bottom,0px)); }
+  form span { color:var(--white); font-weight:700; }
+  #in { flex:1; min-width:0; background:transparent; border:0; border-bottom:1px solid #2c5a2a; color:var(--white); font:inherit; padding:6px 2px; caret-color:var(--ph); }
+  #wrap.frozen #out { animation:jit .12s steps(2) infinite; }
+  #wrap.frozen form { opacity:.25; }
+  @keyframes jit { 50% { transform:translateX(2px); filter:brightness(1.4); } }
+  @media (prefers-reduced-motion:reduce) { #wrap.frozen #out { animation:none; } }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header><span>תעלומת הפלאג האחרון</span><span id="clock"></span></header>
+  <canvas id="pic" width="280" height="192" role="img" aria-label="תמונת המקום"></canvas>
+  <div id="out" aria-live="polite"></div>
+  <div id="keys">
+    <button type="button" data-c="הבט">הבט</button>
+    <button type="button" data-c="מלאי">מלאי</button>
+    <button type="button" data-c="קטלוג">קטלוג</button>
+    <button type="button" data-c="רמז">רמז</button>
+    <button type="button" data-c="עזרה">עזרה</button>
+    <button type="button" data-c="תמונה">תמונה</button>
+  </div>
+  <form id="f" autocomplete="off"><span>]</span><input id="in" type="text" inputmode="text" enterkeyhint="send" aria-label="פקודה" autocapitalize="off" autocorrect="off" spellcheck="false"></form>
+</div>
+
+<script>
+(function () {
+"use strict";
+var KEY = "plug1986.v1";
+var outEl = document.getElementById("out"), inEl = document.getElementById("in"),
+    clockEl = document.getElementById("clock"), wrap = document.getElementById("wrap");
+var S, locked = false;
+
+function fresh() { return { loc:"salon", inv:[], f:{}, min:20*60+10, hints:0, mode:null, q:0, eitan:0, n:0, over:false }; }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+function load() { try { var j = localStorage.getItem(KEY); return j ? JSON.parse(j) : null; } catch (e) { return null; } }
+function wipe() { try { localStorage.removeItem(KEY); } catch (e) {} }
+
+function out(t, cls) { var p = document.createElement("p"); if (cls) p.className = cls; p.textContent = t; outEl.appendChild(p); outEl.scrollTop = outEl.scrollHeight; }
+function say(t) { out(t, "say"); }
+function sys(t) { out(t, "sys"); }
+function wa(who, t) { out("[ווטסאפ] " + who + ": " + t, "wa"); }
+function tick(m) { S.min += m; }
+function clockStr() { var m = S.min % 1440; var h = Math.floor(m / 60), mm = m % 60; return (h < 10 ? "0" : "") + h + ":" + (mm < 10 ? "0" : "") + mm; }
+function showClock() { clockEl.textContent = "נס ציונה · " + clockStr(); }
+function has(i) { return S.inv.indexOf(i) >= 0; }
+function give(i) { if (!has(i)) S.inv.push(i); }
+function drop(i) { var k = S.inv.indexOf(i); if (k >= 0) S.inv.splice(k, 1); }
+var F = function () { return S.f; };
+
+function encode(s) { return s.split("").map(function (ch) { var c = ch.charCodeAt(0); return (c >= 0x5D0 && c <= 0x5EA) ? String.fromCharCode(0x60 + c - 0x5D0) : ch; }).join(""); }
+
+/* ---------- מילון ---------- */
+var N = {
+  rami:["רמי"], udi:["אודי"], eitan:["איתן"], yechiel:["יחיאל"], shalev:["שלו"], dimant:["דימנט","דיאמנט"],
+  dahan:["דהן"], sharon:["שרון"], nir:["ניר"], inbar:["ענבר","עינבר"], gil:["גיל"], nachshon:["נחשון","פלונטר"],
+  dragon:["דרגון"], moshe:["משה","ווזנה"], alex:["אלכס"], ido:["עידו"], jon:["יונתן","jonathan"], mefarek:["מפרק","מוכר"],
+  david:["דוד"], yariv:["יריב"],
+  salon:["סלון"], kitchen:["מטבח"], coll:["אוסף"], yard:["חצר","חוץ","החוצה","מרפסת","בחוץ"],
+  pt:["תקווה","תקוה"], hod:["השרון","הוד","מעבדה"], south:["דרום","דרומה","מחסן"], home:["ציונה","חזרה","בחזרה","הביתה"],
+  stairs:["מדרגות","למטה"], shelter:["מקלט","פנימה"], door:["דלת"],
+  iic:["iic","2c","c","מחשב","כלבו","מסך"], plug:["פלאג","תקע"], sw:["מתג"], psu:["ספק"], table:["טבלה","מיפוי"],
+  catalog:["קטלוג"], acetone:["אצטון"], lisa:["ליסה"], m100:["100","מודל","מודם","trs"], pcable:["מדפסת","מקבילי"],
+  scsi:["scsi","סקאזי","סקזי"], cable:["כבל"], pcase:["מארז"], note:["פתק"], gplug:["גרמני"], trans:["טרנזיסטור","bc547","547"],
+  cap:["קבל"], res:["נגד","נגדים"], dongle:["דונגל"], carton:["קרטון","ארגז","קרטונים"], ibm:["ibm","יבמ"], next:["next","נקסט"],
+  tam:["tam","שנה","יובל"], mac:["מק","מקינטוש","plus","פלוס"], disk:["דיסק"], guard:["שומר","1"], pizza:["פיצה"], file:["קובץ","אפריל"],
+  dispute:["מחלוקת"], list:["רשימה"], dog:["דוברמן","כלב"], cat:["חתול","חתולים"], sticker:["מדבקה","כיתוב"], table0:["שולחן"],
+  iie:["iie","2e"], sixty:["60","$60"]
+};
+var VERBS = {
+  look:["הבט","הביטי","הסתכל","הסתכלי","ה","תאר","סביב"],
+  go:["לך","לכי","עבור","היכנס","כנס","צא","רד","עלה","חזור","גש"],
+  drive:["סע","סעי","נסע"],
+  exam:["בדוק","בדקי","בחן","קרא","הרח","חפש"],
+  take:["קח","קחי","הרם","אסוף"],
+  talk:["דבר","דברי","שאל","שוחח","פנה"],
+  use:["השתמש","הפעל","חבר","הדלק","הזז","תקן","הכנס","פתח","הלחם","בנה","חייג","מרח","הראה","נתק"],
+  give:["תן","תני"],
+  listen:["הקשב","הקשיבי","המשך","שמע"],
+  type:["הקלד","אמור","ענה","כתוב"],
+  ask:["בקש","בקשי"],
+  inv:["מלאי","מ","תיק"], cat:["קטלוג"], help:["עזרה","?","help"], hint:["רמז"], restart:["מחדש"], gfx:["תמונה","גרפיקה"]
+};
+var PRE = "והלבמשכ";
+function mk(tok, kw) {
+  if (tok === kw) return true;
+  var d = tok.length - kw.length;
+  if (d < 1 || d > 2 || tok.slice(d) !== kw || kw.length < 2) return false;
+  for (var i = 0; i < d; i++) if (PRE.indexOf(tok[i]) < 0) return false;
+  return true;
+}
+var T = [];
+function t(id) { var k = N[id]; for (var i = 0; i < T.length; i++) for (var j = 0; j < k.length; j++) if (mk(T[i], k[j])) return true; return false; }
+function norm(s) { return s.toLowerCase().replace(/[֑-ׇ]/g, "").replace(/\/\/c/g, "iic").replace(/[״"'׳.,!?:;()\-\/\\]/g, " ").split(/\s+/).filter(Boolean); }
+function verbOf(tok) { for (var v in VERBS) if (VERBS[v].indexOf(tok) >= 0) return v; return null; }
+
+/* ---------- קטלוג ---------- */
+var CAT = [
+  [["altair","אלטאיר","8800"], "ALTAIR 8800 · 1975", "המחשב שהצית את המהפכה. נמכר כקיט. גייטס ואלן הודיעו ליצרנית שיש להם BASIC בשבילו, לפני שכתבו שורה אחת."],
+  [["kim","קים"], "MOS KIM-1 · 1976", "מחשב על לוח אחד, שנועד להציג את ה-6502. אותו שבב שיפעיל אחר כך את ה-Apple II ואת הקומודור 64."],
+  [["1","i","ראשון","ווזניאק","אפל1"], "APPLE I · 1976", "המחשב הראשון של אפל. ווזניאק תכנן ובנה אותו ביד. נמכר כלוח אם בלבד, בלי מארז, ספק או מקלדת, במחיר המפורסם של 666.66 דולר."],
+  [["2","ii","שני","visicalc"], "APPLE ][ · 1977", "הפך את המחשב האישי למוצר להמונים. VisiCalc, הגיליון האלקטרוני הראשון, עשה ממנו כלי עבודה בכל עסק."],
+  [["vax","וקס"], "DIGITAL VAX-11/780 · 1977", "קו הבסיס שלפיו נמדדו כל המחשבים: כוח העיבוד שלו הוגדר כ-MIPS אחד."],
+  [["pet","פט"], "COMMODORE PET · 1977", "הכל-באחד הראשון: מסך, מקלדת וכונן קלטות במארז מתכת אחד."],
+  [["trs","80","טנדי"], "TANDY TRS-80 · 1977", "נמכר ברשת Radio Shack והביא את המחשב לכל עיירה קטנה."],
+  [["atari","אטארי","400","800"], "ATARI 400/800 · 1979", "תוכנן כמערכת משחקים ושווק כמחשב. הראשון עם שבבים ייעודיים לגרפיקה ולסאונד. כן, הוא יודע לעשות גרפיקה."],
+  [["ti","99","טקסס"], "TI-99/4 · 1979", "המחשב הביתי הראשון עם מעבד 16 ביט. הצית את מלחמת המחירים שהוציאה את היצרנית שלו מהשוק."],
+  [["3","iii","שלישי"], "APPLE /// · 1980", "ניסיון כושל להיכנס לשוק העסקי. ג'ובס התעקש על מחשב בלי מאוורר, והמחשב התחמם."],
+  [["pc","8088","ibm","יבמ"], "IBM PC · 1981", "המחשב שהגדיר את המושג PC. נבנה מרכיבי מדף. המוח שלו, מעבד האינטל 8088, תוכנן ופותח כולו במרכז הפיתוח של אינטל בחיפה."],
+  [["osborne","אוסבורן"], "OSBORNE ONE · 1981", "הנייד המסחרי המצליח הראשון. מזוודה של 11 קילו עם מסך של 5 אינץ'."],
+  [["zx81","zx","סינקלייר","sinclair"], "SINCLAIR ZX81 · 1981", "ארבעה שבבים בלבד על הלוח. שער הכניסה של דור שלם לתכנות."],
+  [["dragon","דרגון","32"], "DRAGON 32 · 1982", "בריטי, מעבד 6809E. נכלל בקטלוג כי הוא מסמל את תור הזהב של המחשוב הביתי בישראל."],
+  [["64","c64","קומודור","commodore"], "COMMODORE 64 · 1982", "המחשב האישי הנמכר ביותר בכל הזמנים."],
+  [["grid","גריד","compass"], "GRiD COMPASS · 1982", "אבי הניידים. הראשון בעיצוב צדפה. טס עם האסטרונאוטים במעבורת החלל."],
+  [["100","מודל","kyocera"], "TRS-80 MODEL 100 · 1983", "נייד עם מסך LCD ומודם פנימי. כתבים שלחו ממנו כתבות דרך קו הטלפון."],
+  [["lisa","ליסה"], "APPLE LISA · 1983", "המחשב המסחרי הראשון של אפל עם ממשק גרפי ועכבר. נכשל בגלל מחיר של כמעט 10,000 דולר, וסלל את הדרך למקינטוש."],
+  [["clc","9100","צב","לוגו","עץ","הדעת"], "CLC 9100 · 1984", "מחשב חינוכי ישראלי של חברת ״עץ הדעת״, שפותח בקיבוץ יסעור כדי ללמד ילדים את שפת Logo. במרכזו הצב המפורסם."],
+  [["iic","2c","c"], "APPLE //c · 1984", "הגרסה הקומפקטית של ה-Apple II, בשפת העיצוב Snow White. לפי הקטלוג: ״איננו אחד מהמחשבים החשובים בהיסטוריה״. אל תגיד את זה לאודי."],
+  [["macintosh","מקינטוש","מק","1984"], "APPLE MACINTOSH · 1984", "הביא את הממשק הגרפי והעכבר לקהל הרחב. הושק עם הפרסומת ״1984״."],
+  [["t1100","טושיבה","toshiba"], "TOSHIBA T1100 · 1985", "הנייד הראשון לשוק ההמוני, תואם PC עם סוללה נטענת."],
+  [["gs","iigs"], "APPLE IIGS · 1986", "החזק ביותר בסדרת ה-Apple II. 16 ביט, גרפיקה וסאונד."],
+  [["ps","ps2"], "IBM PS/2 · 1987", "הניסיון של IBM להחזיר לעצמה את השוק עם ארכיטקטורה סגורה. השוק סירב. נשארו מזה חיבורי העכבר והמקלדת, וה-VGA."],
+  [["next","נקסט","קוביה"], "NeXT · 1988", "קוביית המגנזיום השחורה של ג'ובס. עליה הומצאה רשת ה-WWW. שבב ה-DSP שלה פותח במוטורולה ישראל."],
+  [["se","30"], "MACINTOSH SE/30 · 1989", "בעיני רבים, המקינטוש הקלאסי הטוב ביותר שיוצר."]
+];
+function catalog() {
+  if (!has("catalog")) { out("אין לך קטלוג. מי שכתב אותו נמצא בסלון."); return; }
+  var toks = T.slice(1);
+  if (!toks.length) { out("״קטלוג המחשבים״, גרסה 30, מאת אודי ויינשטיין. הפרק הפתוח: תור הזהב של המחשב האישי, 1975–1990."); sys("הקלד קטלוג ואחריו שם של מחשב. למשל: קטלוג ליסה. בין הערכים: " + CAT.map(function (c) { return c[1].split(" · ")[0]; }).join(", ") + "."); return; }
+  var best = null, bs = 0;
+  CAT.forEach(function (c) { var sc = 0; toks.forEach(function (tk) { c[0].forEach(function (k) { if (tk === k || mk(tk, k)) sc += k.length > 1 ? 2 : 1; }); }); if (sc > bs) { bs = sc; best = c; } });
+  if (!best) { out("דפדפת קדימה ואחורה. אין ערך כזה בפרק הזה."); return; }
+  out(best[1], "big"); out(best[2]);
+}
+
+/* ---------- מקומות ---------- */
+var L = {
+  salon: { name:"הסלון של רמי", exits:["kitchen","coll","yard"],
+    desc:function () { var f = F(); return "סלון בנס ציונה, הערב של המפגש. על שולחן האוכל קופסאות פיצה פתוחות, וביניהן עיגול נקי באבק, במקום שבו עמד עד לפני רבע שעה ה-Mac Plus מ״סיבית״." +
+      (has("plug") || f.d1 || f.gotPlug ? "" : " ליד העיגול מונח פלאג קטן ושחור.") +
+      " על שולחן צדדי עומד ה-Apple //c של אודי" + (f.iicOn ? ", והמסך הירוק שלו דולק." : ", כבוי.") + " באוויר ריח של נגד שרוף. או של פיצה."; } },
+  kitchen: { name:"המטבח", exits:["salon"], desc:function () { return "מטבח מואר. על השיש מגש פיצה שלישי שאף אחד לא הספיק לפתוח, ולידו מכונת קפה שעובדת שעות נוספות."; } },
+  coll: { name:"חדר האוסף", exits:["salon"], desc:function () { return "החדר שבגללו רמי קנה את הבית. מדפים מהרצפה עד התקרה. ליסה במקום של כבוד. Apple IIe בלי ספק כוח. על שולחן העבודה TRS-80 Model 100 מחובר לשקע הטלפון" + (has("pcable") ? "." : ", ולידו כבל מדפסת מגולגל."); } },
+  yard: { name:"החצר הקדמית", exits:["salon"], desc:function () { return "חצר קטנה מול הבית. ערב נעים. הרכב שלך חונה ליד המדרכה, ומכאן אפשר לנסוע: לפתח תקווה (אלכס), להוד השרון (המעבדה של עידו)" + (F().listing ? ", או דרומה, אל המחסן." : ".") + (F().stairs ? " בצד הבית, מאחורי שיח, יורדות מדרגות בטון." : ""); } },
+  pt: { name:"הדירה של אלכס, פתח תקווה", exits:["home"], desc:function () { return "דירה שהיא מבוך של קרטונים עם כיתוב ביפנית. מעבר צר מוביל בין מגדל של Macintosh Portable לבין ליסה 2/10. על קרטון ענק יושב דוברמן, בתור קנה מידה. שני חתולים ישנים על מקינטוש יום השנה ה-20."; } },
+  hod: { name:"המעבדה של עידו, הוד השרון", exits:["home"], desc:function () { return "מעבדה מסודרת להפליא. תחנת הלחמה, מכונת BGA, מגירות קבלים ממוינות לפי ערך. על המדף ספק כוח של מגבר אנלוגי, פתוח לניתוח."; } },
+  south: { name:"המחסן בדרום", exits:["home"], desc:function () { return "מחסן פח בקצה אזור תעשייה. בפנים, על שולחנות ארוכים, מחשבים שהיו פעם שלמים: מסך של ליסה בלי מכסה, מקינטוש SE בלי לוח, ProFile מפורק לגורמים. כל חלק בשקית, לכל שקית מחיר." + (has("pcase") || F().gotCase ? "" : " על מדף עליון, מארז של Mac Plus עם מדבקה: ״סיבית״."); } },
+  stairs: { name:"מדרגות המקלט", exits:["yard"], desc:function () { var f = F(); return "שמונה מדרגות בטון יורדות אל דלת פלדה. על הדלת מותקנת תיבת עץ אמיתי, ובתוכה לוח ירוק עם שבבים בשורות ומקלדת Datanetics. אפל 1. " + (f.doorOpen ? "הדלת פתוחה." : (f.yech ? "יחיאל רכון עליו, והסמן מהבהב: \\" : "המסך שלו מציג שורה של סימני @ ולא מגיב.")); } },
+  shelter: { name:"המקלט", exits:["stairs"], desc:function () { var f = F(); return "מקלט ישן מתחת לבית. נורה אחת. ריח של אבק ושל פלסטיק ישן. " + (f.cartonOpen ? "קרטון ה-IBM פתוח, ועל הרצפה לפניו עומדים ה-Mac Plus מ״סיבית״ והדיסק החיצוני שלו" + (f.scsiOn ? ", מחוברים זה לזה בכבל." : ", כל אחד לחוד.") : "במרכז החדר שלושה קרטונים: אחד של Macintosh יום השנה ה-20, אחד של NeXT, ואחד של IBM PS/2, סגור בנייר דבק."); } }
+};
+var LNAME = { salon:"סלון", kitchen:"מטבח", coll:"חדר האוסף", yard:"חצר", home:"חזרה לנס ציונה (סע)", stairs:"מדרגות", shelter:"מקלט" };
+function who(loc) {
+  var f = F(), a = [];
+  if (loc === "salon") { a = ["רמי","אודי","איתן"]; if (!f.yech) a.push("יחיאל"); if (!f.shalevJoin || S.loc !== "south") a.push("שלו"); a.push("דוד דימנט (בפינה, שותק)"); }
+  if (loc === "kitchen") a = ["שרון","ניר","דוד דהן"];
+  if (loc === "coll") a = ["ענבר","גיל","יריב נחשון"];
+  if (loc === "yard") a = ["משה ווזנה","יריב דרגון"];
+  if (loc === "pt") a = ["אלכס"];
+  if (loc === "hod") a = ["עידו"];
+  if (loc === "south") { a = ["המפרק"]; if (f.shalevJoin) a.push("שלו (בא איתך)"); }
+  if (loc === "stairs" && f.yech) a = ["יחיאל"];
+  return a;
+}
+function look() {
+  var l = L[S.loc], f = F();
+  out("— " + l.name + " —", "big");
+  out(l.desc());
+  var w = who(S.loc); if (w.length) sys("כאן: " + w.join(", ") + ".");
+  var ex = l.exits.slice();
+  if (S.loc === "yard" && f.stairs) ex.push("stairs");
+  if (S.loc === "stairs" && f.doorOpen) ex.push("shelter");
+  sys("יציאות: " + ex.map(function (e) { return LNAME[e]; }).join(", ") + ".");
+}
+function moveTo(loc, mins) { S.loc = loc; tick(mins || 1); look(); arrive(); }
+
+/* ---------- אירועים ---------- */
+function freezeScene() {
+  var f = F(); f.fake = true; locked = true;
+  out("אתה נכנס לסלון עם המארז מתחת לזרוע. המדבקה של ״סיבית״ פונה החוצה.");
+  say("רמי: ״מצאת אותו! אלוף!!!״");
+  out("מחיאות כפיים. מישהו פותח את הפיצה השלישית. שלו כבר מחפש מברג.");
+  out("*** כל הכבוד! פתרת את תעלומת הפלאג האחרון ***", "big");
+  out("*** סוף ***", "big");
+  setTimeout(function () { wrap.classList.add("frozen"); sys("..."); }, 2600);
+  setTimeout(function () { sys("המקלדת לא מגיבה."); }, 4600);
+  setTimeout(function () {
+    wrap.classList.remove("frozen"); locked = false;
+    out("המסך קפא. הקשה מאה ואחת.");
+    out("מהפינה קם האיש השקט. זו הפעם הראשונה הערב שהוא מדבר.");
+    say("דוד דימנט: ״קו ההגנה הראשון נכתב כדי שיפרצו אותו. הפורץ שמח, וממשיך לאתגר הבא. קו ההגנה השני מתעורר רק אחר כך, תוך כדי שימוש.״");
+    say("איתן: ״את הרעיון לקחנו מהמצרים הקדמונים. בפירמידה בנו חדר קבורה מדומה, עם משרת של פרעה וקצת זהב, כדי ששודדי הקברים יחשבו שהגיעו. הפרעה האמיתי שכב עמוק מתחת.״");
+    out(f.caseOpen ? "המארז ריק, כמו שכבר ראית. משרת של פרעה." : "שלו פותח את המארז. הוא ריק. אין לוח, אין שפופרת. רק פתק ושקית קטנה. (בדוק מארז)");
+    say("דוד דימנט: ״ממשיך לעקוב.״");
+    save(); inEl.focus();
+  }, 6800);
+}
+function arrive() {
+  var f = F();
+  if (S.loc === "salon" && has("pcase") && !f.fake) freezeScene();
+  if (S.loc === "yard" && f.ship === 1) { f.ship = 2; give(f.shipItem); out("מונית עוצרת ליד המדרכה. נהג חביב מושיט לך חבילה דרך החלון: ״מיונתן. הוא אמר שתבין.״"); sys("קיבלת: " + INAME[f.shipItem] + "."); }
+}
+var INAME = { catalog:"קטלוג המחשבים של אודי", plug:"פלאג DIN5 יצוק באפוקסי", psu:"ספק כוח ל-IIc", table:"טבלת המיפוי של גיל", acetone:"בקבוק אצטון",
+  pcable:"כבל מדפסת מקבילי", scsi:"כבל SCSI", pcase:"מארז Mac Plus עם מדבקת ״סיבית״", gplug:"פלאג DIN5 גרמני, ריק ואטום", trans:"טרנזיסטור BC547",
+  cap:"קבל", res1:"נגד מהר ציון (מענבר)", res2:"נגד מספק ישן (משלו)", dongle:"דונגל אמיתי, עם מעגל השהיה", dispute:"טופס ״פתיחת מחלוקת״ מוכן לשליחה", list:"רשימת המלאי של שרון" };
+
+/* ---------- שיחות ---------- */
+var EITAN = [
+  "איתן: ״ב-1980 קניתי את האפל 2 הראשון שלי. 48K, עוד עם DOS 3.2. התאהבתי. באוקטובר 1983 פגשתי בלונדון את ווזניאק. הייתה לי מדבקה של אפל על הרכב, עם הלוגו הצבעוני. מי שראה אותה ברמזור היה מצפצף, והיינו עוצרים בצד ומחליפים פרטים: למי יש מה, ואיזו גרסה של לוקסמיט.״",
+  "איתן: ״ב-1985 הזמינו מאיתנו 300 יחידות כלבו בשבועיים. לכל אחת צריך פלאג. הפלאגים הסיניים לא החזיקו: האפוקסי נזל מהם אחרי היציקה. היינו חייבים פלאג גרמני, אטום כהלכה, ובארץ לא היה. חבר שלי, חובב רדיו, עלה על המקמ״ש ומצא במינכן מישהו שקנה לנו 300. יומיים אחר כך הם נחתו במשרד, בשקית, עם אחיינית של חובב מחיפה. בלי פלאג גרמני ריק, אין הגנה.״",
+  "איתן: ״ועכשיו ההגנה עצמה. בפלאג היה גשר קצר בין SND ל-RCV. את זה התוכנה בודקת בעלייה, וזה חדר הקבורה המדומה. ההגנה האמיתית מתעוררת אחרי כמאה הקשות: מעגל השהיה קטן בין RTS ל-CTS. טרנזיסטור אחד, BC547 נדמה לי, קבל אחד ושני נגדים. התוכנה שולחת RTS ומחכה כמה מאיות שנייה. אם התשובה מגיעה מיד, או לא מגיעה, היא יודעת שאין פלאג ונתקעת. ודוד עטף את הכול בבדיקת CRC. שיטת הבצל.״",
+  "איתן: ״ואפריל 1986... פרשה שלא פוענחה עד היום, ומככב בה מקינטוש. Fat Mac, או שכבר Plus, כזה כמו שעמד פה על השולחן. אבל את הסיפור הזה אספר רק כשהמק יחזור. מה השעה? אוי.״"
+];
+function talk(p) {
+  var f = F(), here = who(S.loc).join(" ");
+  function absent(n) { out(n + " לא כאן."); }
+  switch (p) {
+  case "rami":
+    if (S.loc !== "salon") return absent("רמי");
+    if (f.stairs) return say("רמי: ״מקלט? יש לי מקלט?! קניתי את הבית בשביל חדר האוסף. לא בדקתי מה יש מתחת.״");
+    return say("רמי: ״ברוך הבא לקבוצה. בחרת ערב מעניין להצטרף. המק של סיבית עמד פה על השולחן, עם הדיסק החיצוני. החשמל נפל, וכשחזר נשאר רק עיגול באבק. תסתובב, תדבר עם כולם. אצלנו התחביב הוא קודם כל האנשים והסיפורים, ורק אחר כך המחשבים.״");
+  case "udi":
+    if (S.loc !== "salon") return absent("אודי");
+    if (!has("catalog")) { give("catalog"); say("אודי: ״חבר חדש? קח, זה הקטלוג שלי, גרסה 30. אם מישהו ישאל אותך הערב שאלה על מחשב ישן, התשובה שם.״"); sys("קיבלת: קטלוג. (הקלד: קטלוג)"); if (!f.iicOn) say("אודי: ״וה-IIc שלי נכבה בהפסקת החשמל ולא נדלק. הספק הלך. יש לי לפחות שלושה כאלה איפה שהוא בחדר. בבית.״"); return; }
+    if (!f.iicOn) return say("אודי: ״בלי ספק כוח ה-IIc לא יעלה. תשאל במטבח, אולי למישהו יש ספק בתיק.״");
+    if (S.loc === "salon" && f.file) return say("אודי: ״חיכיתי 40 שנה לראות את כלבו עולה. עכשיו אני רוצה לראות גם את המק.״");
+    return say("אודי: ״מעל המקלדת של ה-IIc יש מתג. במקור הוא החליף בין QWERTY ל-Dvorak. אצלנו בארץ הוא מחליף בין עברית לאנגלית קטנה. אי אפשר לראות את שתיהן יחד: או זה, או זה.״");
+  case "eitan":
+    if (S.loc !== "salon") return absent("איתן");
+    say("איתן: ״אני מכיר את המק הזה. מכרתי אותו בעצמי. הכרתי אישית כל לקוח מק בארץ. אני יכול להחזיק אותך עם סיפורים עד הבוקר, אם רק תיתן לי.״");
+    return sys("(הקלד הקשב כדי לשמוע סיפור. כל סיפור לוקח חצי שעה.)");
+  case "yechiel":
+    if (f.yech) return say("יחיאל: ״הוא חי ובועט. שים לב, הוא שואל שאלות. כשתהיה מוכן, ענה לו.״ (הקלד: ענה)");
+    if (S.loc !== "salon") return absent("יחיאל");
+    if (f.stairs) { f.yech = true; say("יחיאל: ״אפל 1? על דלת?! בתיבת עץ אמיתי? אני בא. בניתי אחד כזה, אני יודע איך מעירים אותו.״"); return sys("יחיאל יורד אל מדרגות המקלט ומחכה לך שם."); }
+    return say("יחיאל: ״משהו פה לא הגיוני. כולם בדקו שהליסה שיש להם בבית עדיין נמצאת שם? של רמי בחדר האוסף. לך תסתכל.״");
+  case "shalev":
+    if (S.loc === "south") return say("שלו: ״תראה מה הוא עשה פה. שלושים מחשבים, והוא מפרק אותם לשקיות. חי בסרט.״");
+    if (S.loc !== "salon") return absent("שלו");
+    if (f.recipe && !has("res2") && !has("dongle") && !f.d2) { give("res2"); say("שלו: ״נגד? יש לי הרבה ספקים ישנים, אז לך תדע. הנה, הוצאתי אחד. לא הכליה שלי, אז בכיף.״"); return sys("קיבלת: " + INAME.res2 + "."); }
+    if (f.listing && !f.shalevJoin) { f.shalevJoin = true; return say("שלו: ״ראיתי את המודעה. 7,777 שקל על מארז. חי בסרט. אני בא איתך דרומה, מישהו צריך להגיד לו את זה בפנים.״"); }
+    if (f.iicOn && !f.decoded && !f.swFixed) { f.swFixed = true; return say("שלו: ״המתג של ה-IIc תקוע? ALPS SKFL. כולם נתקעים. רגע.״ הוא מוציא מהכיס פינצטה, נוגע פעם אחת, ומשהו עושה קליק. ״עכשיו תזיז אותו.״"); }
+    return say("שלו: ״אני הרחתי רק פיצה. יונתן נשבע שזה נגד שרוף. אולי נגד שרוף פשוט מריח טעים.״");
+  case "dimant":
+    if (S.loc !== "salon") return absent("דוד דימנט");
+    if (f.fake) return say("דוד דימנט: ״הפרעה תמיד מתחת. ממשיך לעקוב.״");
+    return say("דוד דימנט מרים אליך מבט ארוך. ״ממשיך לעקוב.״");
+  case "dahan":
+    if (S.loc !== "kitchen") return absent("דוד דהן");
+    if (f.listing && !has("dispute") && !f.gotCase) { give("dispute"); say("דוד דהן: ״מוכר שמוכר רק דרך האתר? אז עובדים איתו דרך האתר. תפתח מחלוקת. הוא חייב להציג מספר מעקב, ואין לו. הכנתי לך טופס, רק ללחוץ שלח.״"); return sys("קיבלת: " + INAME.dispute + "."); }
+    return say("דוד דהן: ״חג שמח. מעניין אם המק הזה בכלל עבד.״");
+  case "sharon":
+    if (S.loc !== "kitchen") return absent("שרון");
+    if (!has("list")) { give("list"); say("שרון: ״אמרתי לכולם: עדיף לשים תמונות עם מחירים, בשביל כולם. אף אחד לא הקשיב, אז עשיתי רשימה לבד, עוד לפני הפסקת החשמל. קח.״"); return sys("קיבלת: רשימת מלאי. (בדוק רשימה)"); }
+    return say("שרון: ״מי שלא מבין בספקי כוח, בשבילו זו בעיה גדולה. ה-TI שלי מחכה לספק כבר שנה.״");
+  case "nir":
+    if (S.loc !== "kitchen") return absent("ניר");
+    if (!f.iicOn && !has("psu")) { give("psu"); say("ניר: ״ספק ל-IIc? יש לי בתיק. אל תשאל למה איש אטארי מסתובב עם ספק של אפל.״"); return sys("קיבלת: " + INAME.psu + "."); }
+    return say("ניר: ״ראית? המשחק הזה שאתה בתוכו יודע לעשות גרפיקה. 280 על 192, ירוק על שחור. אטארי היה עושה את זה בצבע.״");
+  case "inbar":
+    if (S.loc !== "coll") return absent("ענבר");
+    if (!has("acetone")) { give("acetone"); say("ענבר: ״ענבר. בלי י'. קח אצטון. כל שבב שמגיע בדואר, וכל מדבקה שנראית חשודה: תמיד תעביר אצטון על הכיתוב.״"); sys("קיבלת: " + INAME.acetone + "."); if (!f.frozen) return; }
+    if (f.recipe && !has("res1") && !has("dongle") && !f.d2) { give("res1"); say("ענבר: ״נגד? עברתי באלקטרוניקה הר ציון בדרך לעבודה. קח אחד. לא העבודה הכי יפה שלי, אבל זה פרוטוטייפ.״"); return sys("קיבלת: " + INAME.res1 + "."); }
+    if (f.frozen && !f.d2) { f.dbg = true; return say("ענבר: ״הסתכלתי על הקוד. יש רוטינה לא מוצפנת שקוראת לבדיקת הדונגל, ובכתובת $1D14 יש BCC. אם דורכים עליו עם 60, שזה RTS, הבדיקה חוזרת כאילו הצליחה. בייט אחד. אבל זה האתגר שלך, אני לא נותן טיפים.״ (ליד ה-IIc: הקלד 60)"); }
+    return say("ענבר: ״אגב, זוונטם זה שדה התעופה של בריסל. המוזיאון נמצא בזוולה. סתם, שיהיה מדויק.״");
+  case "gil":
+    if (S.loc !== "coll") return absent("גיל");
+    if (!has("table")) { give("table"); say("גיל: ״ב-ROM העברי האותיות מסודרות לפי הא״ב, במקום האותיות הקטנות באנגלית. א לא יושבת על A. קח את הטבלה שלי. אבל ענבר פה פי אלף יותר חכם ממני.״"); return sys("קיבלת: " + INAME.table + "."); }
+    return say("גיל: ״אני חייב ל-AppleWin איזה pull request כבר שנתיים. עד 128K!״");
+  case "nachshon":
+    if (S.loc !== "coll") return absent("יריב נחשון");
+    if (f.morse && !f.knowsShelter) { f.knowsShelter = true; return say("יריב נחשון: ״מורס? עשיתי קורס אצל אהרון, חובב הרדיו. לא השלמתי. בוא נראה: שני קווים, זו מ'. קו-קו-נקודה-קו, ק'. נקודה-קו-נקודה-נקודה, ל'. והאחרונה, שתי נקודות וקו... עד אליה לא הגעתי. מ-ק-ל ומשהו.״"); }
+    return say("יריב נחשון: ״קוראים לזה ניוטון, לא נורטון. ויש לי פיפין, אם מישהו שואל.״");
+  case "dragon":
+    if (S.loc !== "yard") return absent("יריב דרגון");
+    if (f.file && !f.bbsNum) {
+      if (!f.dragonJoke) { f.dragonJoke = true; return say("יריב דרגון: ״הסיסמה של המועדון? בטח. הסיסמה היא ׳סיסמה׳. ויש לי גם ליסה לפירוק, מעוניין למסור.״ הוא מחכה שתצחק."); }
+      f.bbsNum = true; return say("יריב דרגון: ״טוב, ברצינות. הימים האפלים של שנות השמונים. היה לנו מועדון של פריצות משחקים לאפל 2, עם BBS. המספר עדיין שמור אצלי בראש, וכל מודם ישן יחייג אליו. והסיסמה היא התוכנה שכולנו החלפנו ברמזורים: לוקסמיט.״");
+    }
+    return say("יריב דרגון: ״עצה של ותיק: לא לפתוח. זה יבטל את האחריות.״");
+  case "moshe":
+    if (S.loc !== "yard") return absent("משה");
+    if (f.knowsShelter) { if (!f.stairs) { f.stairs = true; say("משה ווזנה: ״מקלט? רגע. עכשיו שאתה אומר: הוא לא הלך לכביש בכלל. הוא הלך עם הקרטון מסביב לבית, וירד במדרגות שמאחורי השיח.״"); return sys("נפתחה יציאה חדשה: מדרגות."); } return say("משה ווזנה: ״המדרגות שם, מאחורי השיח. בפעם הבאה אני מגיע בזמן.״"); }
+    return say("משה ווזנה: ״איחרתי, כרגיל. חיכיתי בחוץ שמישהו יפתח לי, ואז כבה כל הרחוב. ראיתי מישהו יוצא מהבית עם קרטון חום ביד, עם כיתוב כחול. היה חושך. נקווה שבפעם הבאה אני לא מפספס.״");
+  case "alex":
+    if (S.loc !== "pt") return absent("אלכס");
+    return say("אלכס: ״בעיקרון יש לי כמעט הכול. רק מקום אין, וזה נושא כאוב. מה אתה צריך? תבקש, אבל תגיד בדיוק מה.״ (בקש ...)");
+  case "ido":
+    if (S.loc !== "hod") return absent("עידו");
+    if (f.recipe && !has("cap") && !has("dongle") && !f.d2) { give("cap"); say("עידו: ״קבל למעגל השהיה? אמור להיות לי הכול. קח. וכשיהיו לך כל החלקים, תביא, אני מלחים לך את זה בשתי דקות.״ (הלחם)"); return sys("קיבלת: " + INAME.cap + "."); }
+    return say("עידו: ״ספקי כוח זה התחום שלי. הלחמות מכל סוג. אם צריך להלחים משהו, תביא את החלקים.״");
+  case "mefarek":
+    if (S.loc !== "south") return absent("המפרק");
+    if (f.gotCase) return say("המפרק: ״קיבלת את שלך. אני לא מוכר לך יותר שום דבר.״");
+    if (!f.shalevJoin) return say("המפרק: ״המארז? 7,777 שקל, רק דרך האתר, ועוד שלושים דולר משלוח.״ אתה מציין שאתה עומד מולו. ״אז מה? משלוח זה משלוח.״ אין לך מה לענות לו. חסר לך מישהו שיודע להגיד למוכרים כאלה מה הוא חושב עליהם.");
+    say("שלו: ״7,777? על מארז ריק? חי בסרט.״");
+    say("המפרק: ״נתנו לי אותו במתנה.״");
+    out("אתה שואל מי.");
+    return say("המפרק: ״מה זה עניינך?״ (אולי יש דרך רשמית יותר לדבר איתו.)");
+  case "jon":
+    wa("יונתן", "‏אני 5000 ק״מ מכם ולא מוצא את הדרכונים שלי. אבל יש לי חבר שנוחת בארץ הערב. If anyone needs something let me know. רק דבר אחד, המזוודה שלו כבר overweight.");
+    return sys("(בקש מיונתן ... – בקשה אחת בלבד)");
+  }
+}
+
+/* ---------- בקשות ---------- */
+function ask() {
+  var f = F();
+  if (S.loc === "pt" && !t("jon")) {
+    if (t("trans")) {
+      if (has("trans") || has("dongle") || f.d2) return say("אלכס: ״כבר נתתי לך.״");
+      if (T.indexOf("bc547") < 0 && T.indexOf("547") < 0) return say("אלכס: ״טרנזיסטור? איזה? יש לי ארבעת אלפים, בשלוש קופסאות, אחת מהן מיפן. תגיד מספר.״");
+      give("trans"); say("אלכס: ״BC547. קופסה שנייה, שורה שלישית. קניתי פעם מאה בטעות.״"); return sys("קיבלת: " + INAME.trans + ".");
+    }
+    if (t("scsi") || t("cable")) { if (has("scsi")) return say("אלכס: ״יש לך כבר.״"); give("scsi"); say("אלכס: ״כבל SCSI למק? DB25 או 50 פין? קח את שניהם, מה אכפת לי. רק אל תחבר שם כבל מדפסת.״"); return sys("קיבלת: " + INAME.scsi + "."); }
+    if (t("lisa")) return say("אלכס: ״את הליסה לא. היא נדלקה, ואני עדיין בהלם מזה.״");
+    return say("אלכס: ״כזה דווקא אין לי. מוזר.״ הוא רושם את זה לעצמו.");
+  }
+  if (!T.slice(1).length) return out("לבקש מה, וממי?");
+  if (f.ship) return wa("יונתן", "‏כבר שלחתי לך משהו. החבר שלי יצא משדה התעופה. בפעם הבאה אני מביא הכול.");
+  var it = t("scsi") || t("cable") ? "scsi" : t("trans") ? "trans" : t("cap") ? "cap" : t("res") ? "res1" : t("psu") ? "psu" : null;
+  if (T.indexOf("trackstar") >= 0 || T.indexOf("5155") >= 0 || T.indexOf("טראקסטאר") >= 0) return wa("יונתן", "I know 😜 בפעם הבאה. זה לא נכנס במזוודה.");
+  if (!it) return wa("יונתן", "‏יש לי כמה כזה. אבל לא במזוודה של החבר. משהו אחר?");
+  if (has(it)) return wa("יונתן", "‏יש לך כבר אחד, לא?");
+  f.ship = 1; f.shipItem = it;
+  wa("יונתן", "‏בטח. יש לי כמה כזה. החבר שלי נחת לפני שעה, הוא יעבור בנס ציונה. חכה לו בחצר.");
+  if (S.loc === "yard") arrive();
+}
+
+/* ---------- בדיקה / לקיחה ---------- */
+function gibLines() { return "]" + encode("כולכם חשודים") + "\n]" + encode("חבר את הפלאג"); }
+function iicScreen() {
+  var f = F();
+  if (!f.iicOn) return out("ה-Apple //c של אודי. כבוי. מהספק החיצוני שלו, הלבנה הלבנה שעל הרצפה, עולה ריח חרוך.");
+  if (f.file) return out("כלבו 123 פתוח על הקובץ ״אפריל.86״. (פתח קובץ)");
+  if (f.d2) return out("כלבו 123 עובד, והפעם בלי להיתקע. בדיסק קובץ אחד: ״אפריל.86״.");
+  if (f.crc) return out("על המסך: ״נמצא שינוי בקוד. CRC שגוי. הקובץ יישאר נעול. – ד.ד.״ הפריצה של בייט אחד לא מספיקה כאן. צריך את הדבר האמיתי.");
+  if (f.frozen) return out("המסך קפוא. כלבו 123 נתקע באמצע פתיחת ״אפריל.86״. הסמן לא מהבהב.");
+  if (f.d1) return out("כלבו 123, AppleWorks בעברית. תפריט: מעבד תמלילים, מסד נתונים, גליון עבודה. בדיסק קובץ אחד: ״אפריל.86״.");
+  if (f.decoded) { out("עכשיו, כשהמסך בעברית, שתי השורות ברורות:"); return out("כולכם חשודים\nחבר את הפלאג", "big"); }
+  out("המסך הירוק דולק. שתי שורות, ואף אחת מהן לא אומרת כלום:"); out(gibLines(), "ltr");
+  out("מעל המקלדת יש מתג קטן." + (f.swFixed ? "" : " ניסית להזיז אותו. הוא תקוע."));
+}
+function exam() {
+  var f = F(), l = S.loc;
+  if (t("catalog")) return catalog();
+  if (t("list")) { if (!has("list")) return out("אין לך רשימה."); out("רשימת המלאי של שרון, בכתב יד מסודר, עם מחירים:"); return out("1. Mac Plus מ״סיבית״ + דיסק SCSI חיצוני – של רמי – 400 ₪\n2. Apple //c + ספק – של אודי – לא למכירה\n3. אפל 1, בלי תיבה – של יחיאל – לא לגעת\n4. פיצה משפחתית ×3\n...\n23. קרטון ריק של IBM PS/2, ליד דלת הכניסה – בעלים: לא ידוע. אף אחד לא הודה שהביא אותו."); }
+  if (t("table")) { if (!has("table")) return out("אין לך טבלה."); return out("הטבלה של גיל: ` = א, a = ב, b = ג, c = ד, d = ה ... וכן הלאה, עד z = ת. האותיות הסופיות כלולות, לפי הסדר."); }
+  if (t("dispute") && has("dispute")) return out("טופס פתיחת מחלוקת. ״המוכר גבה דמי משלוח על איסוף עצמי.״ נשאר רק להשתמש בו מול המוכר הנכון.");
+  if (t("acetone") && has("acetone")) return out("בקבוק אצטון קטן. מוחק כיתוב טרי, משאיר כיתוב מקורי.");
+  if (t("note") || ((t("pcase") || t("sticker")) && (has("pcase") || l === "south"))) {
+    if (!has("pcase")) return out("מארז של Mac Plus על המדף העליון, עם מדבקה של ״סיבית״. מכאן אי אפשר לראות מה יש בתוכו.");
+    if (!f.caseOpen) { f.caseOpen = true; give("gplug"); out("אתה פותח את המארז. הוא ריק. אין לוח אם, אין שפופרת, אין כונן. רק פתק מודבק מבפנים, ושקית קטנה."); out("״חדר קבורה מדומה. מצאת את המשרת של פרעה.\nאת זה תצטרך. – ד.ד.״", "big"); out("בשקית: פלאג DIN5 חדש, תוצרת גרמניה, ריק ואטום כהלכה."); return sys("קיבלת: " + INAME.gplug + "."); }
+    return out("מארז ריק ופתק: ״חדר קבורה מדומה. מצאת את המשרת של פרעה. – ד.ד.״");
+  }
+  if (t("gplug") && has("gplug")) return out("פלאג DIN5 גרמני, חמישה פינים, ריק. מהסוג שאפוקסי לא נוזל ממנו.");
+  if (t("dongle") && has("dongle")) return out("פלאג גרמני, ובתוכו טרנזיסטור, קבל ושני נגדים בין RTS ל-CTS. לא העבודה הכי יפה, אבל זה עובד.");
+  if (t("plug")) { if (has("plug") || (l === "salon" && !f.gotPlug)) return out("פלאג DIN5, חמישה פינים, כמו של מערכות סטריאו ישנות. מישהו יצק לתוכו אפוקסי. אי אפשר לפתוח אותו, אי אפשר לראות מה בפנים. הוא מתאים לשקע המודם של ה-IIc."); }
+  if (l === "salon") {
+    if (t("iic") || t("sw")) return iicScreen();
+    if (t("table0") || t("mac")) return out("עיגול נקי באבק, בגודל של Mac Plus. לידו מלבן קטן יותר, בגודל של דיסק חיצוני. מי שלקח אותם לא נגע בפיצה.");
+    if (t("pizza")) return out("פיצה קרה. חצי מגש נשאר. אף אחד לא נגע בה מאז שהאור חזר.");
+  }
+  if (l === "kitchen" && t("pizza")) return out("המגש השלישי. עדיין חם. זה הריח, אגב. לא הנגד.");
+  if (l === "coll") {
+    if (t("lisa")) return out("הליסה של רמי במקומה, שלמה ויפה. לא חסר בה בורג. מי שפעל הערב לא בא לפרק מחשבים. הוא בא בשביל מחשב אחד מסוים.");
+    if (t("m100")) return out("TRS-80 Model 100. מסך LCD קטן, מקלדת מלאה, ומודם פנימי שמחובר לשקע בקיר. אם היה לך מספר, אפשר היה לחייג. (חייג)");
+    if (t("pcable") || t("cable")) return out("כבל מדפסת מקבילי. המחבר שלו נראה בדיוק כמו של כבל SCSI. הוא לא כבל SCSI.");
+    if (t("iie")) return out("Apple IIe יפה, בלי ספק כוח. ״בוא קח בכיף״, אמר רמי פעם על המחשב הזה.");
+  }
+  if (l === "yard" && (t("stairs") || t("shelter"))) return out(f.stairs ? "מדרגות בטון, מאחורי השיח בצד הבית." : "אתה לא רואה כאן שום דבר כזה.");
+  if (l === "pt") {
+    if (t("dog")) return out("דוברמן. הוא לא שומר על החבילה. הוא שם כדי שיבינו כמה היא גדולה.");
+    if (t("cat")) return out("ישנים. ״אני לא יכול לעבוד ככה״, אומר אלכס, ולא מזיז אותם.");
+    if (t("carton")) return out("קרטונים מיפן. על כולם כתוב ״נקנה בטעות״, רק ביפנית.");
+  }
+  if (l === "stairs" && (t("guard") || t("door") || t("iic"))) return out(L.stairs.desc());
+  if (l === "shelter") {
+    if (t("ibm") || (t("carton") && f.cartonOpen)) return out(f.cartonOpen ? "קרטון ה-IBM, פתוח. על נייר הדבק שנקרע היה כתוב: ״לא לפתוח. יבטל את האחריות.״" : "קרטון חום עם כיתוב כחול: IBM Personal System/2. סגור בנייר דבק שעליו כתוב בטוש: ״לא לפתוח. יבטל את האחריות.״ שום אספן אפל לא היה מעיף בו מבט שני.");
+    if (t("tam")) return out("קרטון של Macintosh יום השנה ה-20. פתוח. בפנים רק קלקר ופתק: ״באמת? חדר מדומה בתוך החדר האמיתי. שיטת הבצל.״");
+    if (t("next")) return out("קרטון של NeXT. בפנים מסך אחד, שמישהו קנה פעם בדולר. אין קובייה.");
+    if (t("carton")) return out("שלושה קרטונים: יום השנה ה-20, NeXT ו-IBM. איזה מהם?");
+    if (t("mac") || t("disk")) return out(f.cartonOpen ? "ה-Mac Plus מ״סיבית״. דגם אירופאי, 220 וולט. על הדיסק החיצוני מדבקה דהויה. המחבר בגב המק ריק" + (f.scsiOn ? "? לא, כבר חיברת." : ", ומחכה לכבל.") : "אתה לא רואה כאן מק. רק קרטונים.");
+  }
+  out("לא מצאת בזה שום דבר מיוחד.");
+}
+function take() {
+  var f = F(), l = S.loc;
+  if (l === "salon" && t("plug") && !f.gotPlug) { f.gotPlug = true; give("plug"); return out("לקחת את הפלאג. הוא כבד יותר ממה שנראה. אפוקסי."); }
+  if (l === "coll" && (t("pcable") || t("cable")) && !has("pcable")) { give("pcable"); return out("לקחת את כבל המדפסת. משהו בך אומר שזה רעיון רע."); }
+  if (l === "coll" && (t("m100") || t("lisa") || t("iie"))) return say("ענבר, בלי להרים את הראש: ״זה של רמי.״");
+  if (l === "south" && t("pcase") && !f.gotCase) return say("המפרק: ״ידיים. רק דרך האתר.״");
+  if (l === "salon" && t("pizza")) return out("לקחת משולש. קר. אכלת בכל זאת.");
+  if (l === "kitchen" && t("pizza")) return out("לקחת משולש חם. עכשיו אפשר לחשוב.");
+  if (l === "shelter" && (t("mac") || t("disk") || t("carton"))) return out("כבד, ואין סיבה. מה שצריך לקרות, יקרה כאן.");
+  out("אי אפשר לקחת את זה.");
+}
+
+/* ---------- שימוש ---------- */
+function openFile() {
+  var f = F();
+  if (S.loc !== "salon") return out("אין כאן קובץ לפתוח.");
+  if (!f.iicOn || (!f.d1 && !f.d2)) return out("כלבו לא רץ. המחשב מחכה למשהו.");
+  if (f.d2) {
+    f.file = true;
+    out("הפעם כלבו לא נתקע. מאה הקשות, מאה ואחת, מאה ושתיים. הקובץ נפתח:");
+    out("אפריל.86\n\nהסיפור לא כאן. הוא מעולם לא היה על דיסקט.\nהוא מחכה ליד המק, והמק מחכה אצל השומר.\nהשומר ישאל שלוש שאלות. התשובות בספר של אודי.\nאיפה השומר? חייג למועדון.\nהסיסמה אצל מי שזוכר את הימים האפלים.", "big");
+    return;
+  }
+  if (f.frozen) return iicScreen();
+  f.frozen = true; f.listing = true;
+  out("אתה בוחר במסד הנתונים ומקליד את שם הקובץ. כלבו מתחיל לטעון. הכונן מזמזם. ואז, בהקשה המאה, הכול נעצר. הסמן מפסיק להבהב.");
+  out("הפלאג היצוק עבר את הבדיקה הראשונה. יש כנראה בדיקה שנייה, ואותה הוא לא עובר.");
+  wa("אלכס", "תראו מה עלה עכשיו באיביי. Mac Plus, ״from Sibit, parts only״. מוכר מהדרום, זה שמפרק ליסות. 7,777 שקל 😂");
+  wa("שלו", "חי בסרט. אבל זה המק של רמי, לא?");
+  sys("(מהחצר אפשר עכשיו לנסוע גם דרומה.)");
+}
+function solder() {
+  if (S.loc !== "hod") return out("אין כאן מלחם. יש אחד בהוד השרון.");
+  if (has("dongle") || F().d2) return say("עידו: ״כבר הלחמנו.״");
+  var need = [["gplug","פלאג ריק, לא יצוק"],["trans","טרנזיסטור"],["cap","קבל"],["res1","נגד ראשון"],["res2","נגד שני"]], miss = need.filter(function (n) { return !has(n[0]); }).map(function (n) { return n[1]; });
+  if (!F().recipe) return say("עידו: ״להלחים מה? תביא שרטוט, או לפחות מישהו שזוכר איך זה נבנה.״");
+  if (miss.length) return say("עידו: ״עוד לא. חסר: " + miss.join(", ") + ".״");
+  ["gplug","trans","cap","res1","res2"].forEach(drop); give("dongle"); tick(10);
+  say("עידו: ״טרנזיסטור, קבל, שני נגדים, בין RTS ל-CTS. שתי דקות.״ הוא מלחים, בודק בסקופ ומהנהן. ״יש השהיה. כמה מאיות שנייה.״");
+  sys("קיבלת: " + INAME.dongle + ".");
+}
+function dial() {
+  if (S.loc !== "coll") return out("אין כאן מודם.");
+  if (!F().bbsNum) return out("ה-Model 100 מוכן לחייג, אבל אין לך מספר.");
+  out("המודם הפנימי של ה-Model 100 מחייג. שריקה, חריקה, ואז על מסך ה-LCD:");
+  out("*** מועדון הלילה של אפל 2 ***\nחיבור 300 באוד. מפעיל: לא נמצא מאז 1988.\nסיסמה?", "big");
+  S.mode = "bbs";
+}
+function bbs(raw) {
+  var x = raw.replace(/\s/g, "");
+  if (x === "צא" || x === "נתק") { S.mode = null; return out("ניתקת."); }
+  if (x.indexOf("לוקסמיט") < 0 && x.toLowerCase().indexOf("locksmith") < 0) return out("סיסמה שגויה.\nסיסמה?", "big");
+  S.mode = null; F().morse = true;
+  out("ברוך הבא, חבר ותיק.\nהודעה אחת בלוח. מאת: ד.ד.\nנושא: איפה השומר\n\n-- --.- .-.. ..-\n\nסוף הודעה. הקו נותק.", "big");
+  out("נקודות וקווים. מורס. מישהו בחדר הזה למד פעם מורס.");
+}
+var QS = [
+  ["כמה דולרים עלה הלוח שווזניאק בנה ביד?", function (x) { return /666/.test(x); }, "666.66. נכון."],
+  ["באיזו עיר תוכנן המוח של המחשב שכתוב על הקרטון?", function (x) { return /חיפה/.test(x); }, "חיפה. נכון."],
+  ["באיזה קיבוץ נולד הצב?", function (x) { return /יסעור/.test(x); }, "יסעור. נכון."]
+];
+function guardAsk() { out("\\ שאלה " + (S.q + 1) + " מתוך 3:\n\\ " + QS[S.q][0], "big"); }
+function guard(raw) {
+  if (/^(צא|בטל|חזור)$/.test(raw.trim())) { S.mode = null; return out("התרחקת מהמקלדת."); }
+  if (verbOf(norm(raw)[0]) === "cat") { T = norm(raw); return catalog(); }
+  if (QS[S.q][1](raw)) {
+    out("\\ " + QS[S.q][2], "big"); S.q++;
+    if (S.q >= QS.length) { S.mode = null; F().doorOpen = true; out("ממסר נוקש בתוך תיבת העץ. דלת הפלדה משתחררת ונפתחת פנימה."); say("יחיאל: ״אמרתי לכם. חי ובועט.״"); return sys("נפתחה יציאה: מקלט."); }
+    return guardAsk();
+  }
+  out("\\ לא.", "big"); sys("(אפשר לדפדף בקטלוג גם מכאן: קטלוג ואחריו שם מחשב. צא – להתרחק.)");
+}
+function ending() {
+  var f = F(); S.over = true;
+  out("אתה לוחץ על המתג שבגב. צליל הפתיחה. מק מחייך. הדיסק החיצוני מסתובב, אחרי ארבעים שנה, כאילו כיבו אותו אתמול.");
+  out("על שולחן העבודה תיקייה אחת: ״אפריל 1986״. לחיצה כפולה.");
+  out("המשך במפגש הבא.", "big");
+  out("זה כל הקובץ. שלוש מילים.");
+  out("מאחוריך, על המדרגות, מישהו מוחא כפיים. איתן ודוד עומדים בפתח, ומאחוריהם כל השאר.");
+  say("איתן: ״ארבעים שנה ההגנה הזאת החזיקה. הגיע הזמן שמישהו יעבור את שני הקווים. את הפרשה עצמה אני מספר רק בעל פה, ורק למי שמגיע למפגש.״");
+  say("דוד דימנט: ״זו השמחה שרציתי. עכשיו המשימה הבאה.״");
+  say("רמי: ״אז אף אחד לא גנב כלום? הכול היה כאן, מתחת לסלון שלי? אלופים. מי רוצה פיצה?״");
+  say("אודי: ״ואני רק רוצה להגיד שכלבו עלה. על IIc אמיתי. חיכיתי לזה 40 שנה.״");
+  say("ענבר: ״אני מוסיף את זה להרצאה. זה הכנס השמיני.״");
+  say("שלו: ״ואת המארז הריק אני לוקח. חלקי חילוף.״");
+  say("יחיאל: ״ואני שואל שוב: כולם בדקו שהליסה שלהם בבית?״");
+  say("ניר: ״נו, אמרתי לכם שיש פה גרפיקה. מונוכרום, אבל יש.״");
+  wa("אלכס", "פספסתי משהו? בינתיים קניתי בטעות עוד קרטון.");
+  wa("יונתן", "‏מצאתי את הדרכונים!!! היו בתוך כונן הטוויגי של הליסה. I'm coming in April. ‏תשמרו לי פיצה.");
+  wa("משה ווזנה", "אלופים. הפעם לא פספסתי.");
+  var m = S.min - (20 * 60 + 10), rank = m <= 300 ? "סטיב ווזניאק. פתרת את זה ביד, מהר, ובלי להתאמץ." : m <= 420 ? "Macintosh SE/30. סוס עבודה אמין." : m <= 560 ? "Apple //c. לא מהחשובים בהיסטוריה, אבל אודי אוהב אותך." : "Apple ///. התחממת בדרך, אבל הגעת. בחוץ כבר בוקר.";
+  out("— סוף —", "big");
+  sys("שעת הסיום: " + clockStr() + " · רמזים שביקשת: " + S.hints + " · הדירוג שלך: " + rank);
+  sys("כל הדמויות מבוססות על חברי הקבוצה, באהבה. המפרק מהדרום והפרשה מ-1986 בדויים לגמרי. (הקלד מחדש כדי לשחק שוב.)");
+}
+function use() {
+  var f = F(), l = S.loc, v = T[0];
+  if (v === "הלחם" || v === "בנה") return solder();
+  if (v === "חייג") return dial();
+  if (t("file")) return openFile();
+  if (l === "salon") {
+    if (t("psu")) { if (f.iicOn) return out("המחשב כבר דולק."); if (!has("psu")) return out("אין לך ספק כוח. הספק של אודי שרוף."); drop("psu"); f.iicOn = true; out("החלפת את הספק. ביפ. הנורית הירוקה נדלקת, והכונן הפנימי נוהם."); return iicScreen(); }
+    if (t("sw")) { if (!f.iicOn) return out("המחשב כבוי."); if (f.decoded) return out("המתג כבר על עברית."); if (!f.swFixed) return out("המתג תקוע. מי שמבין בסוויצ'ים של ALPS היה משחרר אותו בשנייה. ואולי מישהו פשוט יודע איזו אות יושבת על איזה מקש."); f.decoded = true; out("קליק. המסך מרצד, והאותיות הקטנות באנגלית מתחלפות בעברית."); return iicScreen(); }
+    if (t("table")) { if (!has("table")) return out("אין לך טבלה."); if (!f.iicOn) return out("המחשב כבוי, אין מה לפענח."); f.decoded = true; out("אתה עובר אות אחרי אות עם הטבלה של גיל. k זו כ', e זו ו'..."); return iicScreen(); }
+    if (t("dongle") || (t("plug") && has("dongle"))) { if (!has("dongle")) return out("אין לך דונגל."); if (!f.iicOn) return out("המחשב כבוי."); drop("dongle"); f.d2 = true; f.frozen = false; f.crc = false; return out("אתה שולף את הפלאג היצוק ומחבר את הדונגל החדש לשקע המודם. אתחול. כלבו 123 עולה. הפעם, אחרי כמה מאיות שנייה, משהו בתוך הפלאג עונה למחשב."); }
+    if (t("gplug")) return out("הפלאג הגרמני ריק. בלי מעגל בפנים הוא סתם פלאג.");
+    if (t("plug")) { if (f.d2) return out("הדונגל האמיתי כבר מחובר."); if (f.d1) return out("הפלאג כבר מחובר."); if (!has("plug")) return out("אין לך פלאג."); if (!f.iicOn) return out("חיברת, אבל המחשב כבוי. שום דבר לא קורה."); drop("plug"); f.d1 = true; out("הפלאג נכנס בקליק לשקע המודם, הפורט הטורי השני. המסך מתנקה, הכונן קורא, ואז:"); out("כלבו 123\nסיבית · בריינס 40 · 1984", "big"); return out("AppleWorks בעברית עולה, אחרי ארבעים שנה. אודי מפסיק לנשום לרגע. בדיסק קובץ אחד: ״אפריל.86״. (פתח קובץ)"); }
+    if (t("sixty")) return typeCmd();
+    if (t("iic")) return iicScreen();
+  }
+  if (t("acetone")) { if (!has("acetone")) return out("אין לך אצטון."); if (has("pcase")) return out("אתה מעביר אצטון על המדבקה של ״סיבית״. הכיתוב נמרח מיד. מדבקה טרייה, בת שבוע לכל היותר. ענבר צדק: תמיד תעביר אצטון על הכיתוב. המארז הזה הוכן מראש."); if (has("plug")) return out("האצטון לא עושה כלום לאפוקסי. יציקה משנת 1985, כנראה."); return out("על מה?"); }
+  if (t("dispute")) { if (!has("dispute")) return out("אין לך טופס כזה."); if (l !== "south") return out("המוכר לא כאן."); if (!f.shalevJoin) return out("לבד מולו, אתה לא מצליח אפילו להוציא את הטלפון."); drop("dispute"); f.gotCase = true; give("pcase"); say("אתה מראה לו את המסך: מחלוקת פתוחה, דמי משלוח על איסוף עצמי, אין מספר מעקב."); say("המפרק: ״מה, אולי אתה רוצה גם את המפתחות לדירה שלי?״"); say("שלו: ״רק את המארז. ותשאיר ביקורת לעצמך.״"); out("המפרק מוריד את המארז מהמדף ודוחף אותו אליך. ״נתנו לי אותו במתנה, שיהיה לכם במתנה. ואני לא מוכר לכם יותר שום דבר.״"); return sys("קיבלת: " + INAME.pcase + ". קל באופן מחשיד."); }
+  if (t("pcase") || t("note")) return exam();
+  if (l === "stairs" && (t("guard") || t("door") || t("iic"))) return answerGuard();
+  if (l === "shelter") {
+    if (t("tam") || t("next")) return exam();
+    if (t("ibm") || t("carton")) { if (t("carton") && !t("ibm") && !f.cartonOpen) return out("שלושה קרטונים: יום השנה ה-20, NeXT ו-IBM. איזה מהם לפתוח?"); if (f.cartonOpen) return out("כבר פתוח."); f.cartonOpen = true; out("אתה קורע את נייר הדבק. האחריות בוטלה."); return out("בפנים, עטופים בשמיכה: Mac Plus בצבע פלטינה, עם מדבקה קטנה של ״סיבית״ בגב, ודיסק SCSI חיצוני. אתה מוציא אותם ומעמיד אותם על הרצפה. מחברים רק צריך."); }
+    if (t("pcable")) { if (!has("pcable")) return out("אין לך כבל כזה."); if (!f.cartonOpen) return out("לחבר למה?"); out("המחבר מתאים בדיוק. אתה כבר מקרב אותו לגב המק, ואז:"); wa("איתן", "לא. ואל תנסה...!!!"); wa("יונתן", "Please do not use a parallel cable. You will damage the motherboard."); return out("אתה מרחיק את היד. איך הם ידעו?"); }
+    if (t("scsi") || t("cable")) { if (!f.cartonOpen) return out("לחבר למה?"); if (!has("scsi")) return out("אין לך כבל SCSI. לאודי, כרגיל, חסר בדיוק הכבל הזה. למישהו אחר בטח יש כמה כאלה."); if (f.scsiOn) return out("כבר מחובר."); drop("scsi"); f.scsiOn = true; return out("כבל ה-SCSI ננעל במקומו, בין המק לדיסק. נשאר רק להדליק."); }
+    if (t("mac") || t("disk") || t("iic")) { if (!f.cartonOpen) return out("אתה לא רואה כאן מק."); if (!f.scsiOn) return out("אתה מדליק את המק. צליל פתיחה, ואז סמל של דיסקט עם סימן שאלה מהבהב. הוא לא מוצא דיסק. הדיסק החיצוני לא מחובר. כיבית."); return ending(); }
+  }
+  if (t("m100")) return dial();
+  out("זה לא עושה כאן כלום.");
+}
+function answerGuard() {
+  var f = F();
+  if (S.loc !== "stairs") return out("אין כאן מי שישאל.");
+  if (f.doorOpen) return out("הדלת כבר פתוחה.");
+  if (!f.yech) return out("האפל 1 מציג שורה של @ ולא מגיב להקשות. צריך מישהו שבנה פעם אחד כזה. יש אחד כזה בסלון.");
+  S.mode = "guard"; out("יחיאל לוחץ RESET. הסמן קופץ שורה, והמסך מקליד לאט, אות אחרי אות:"); guardAsk();
+}
+function typeCmd() {
+  var f = F();
+  if (S.loc === "stairs") return answerGuard();
+  if (t("jon")) return talk("jon");
+  if (S.loc === "salon" && t("sixty")) { if (!f.frozen) return out("אין כרגע איפה להקליד את זה."); if (!f.dbg) return out("60? איפה? אתה לא מכיר את הקוד. מישהו בחדר האוסף פרץ דברים כאלה."); f.crc = true; out("דיבאגר, כתובת $1D14, בייט אחד: 60. הרוטינה חוזרת כאילו הדונגל ענה. כלבו ממשיך לשנייה אחת, ואז:"); out("נמצא שינוי בקוד. CRC שגוי.\nהקובץ יישאר נעול. – ד.ד.", "big"); return out("שיטת הבצל. בגרסה הזאת הקיצור לא עובד. צריך לבנות את הפלאג האמיתי."); }
+  out("הקלדת. שום דבר לא קרה.");
+}
+function listen() {
+  if (S.loc !== "salon") return out("אין כאן מי שמספר.");
+  if (S.eitan >= EITAN.length) return say("איתן: ״את השאר, במפגש הבא.״");
+  tick(29); say(EITAN[S.eitan]); S.eitan++;
+  if (S.eitan === 3) { F().recipe = true; sys("(עכשיו אתה יודע ממה בנוי הפלאג האמיתי: פלאג ריק, טרנזיסטור BC547, קבל ושני נגדים.)"); }
+  sys("עברה חצי שעה. השעה " + clockStr() + ".");
+}
+function go(drive) {
+  var f = F(), l = S.loc, d = null;
+  ["salon","kitchen","coll","yard","stairs","shelter","pt","hod","south","home"].forEach(function (k) { if (!d && t(k)) d = k; });
+  if (!d && t("door") && l === "stairs") d = "shelter";
+  if (!d && (T[0] === "צא" || T[0] === "חזור")) d = { kitchen:"salon", coll:"salon", salon:"yard", shelter:"stairs", stairs:"yard", pt:"home", hod:"home", south:"home" }[l];
+  if (!d) return out("לאן?");
+  if (d === "home") d = "yard";
+  var remote = ["pt","hod","south"];
+  if (remote.indexOf(l) >= 0) { if (d === "yard" || d === "salon") return moveTo("yard", l === "south" ? 45 : 25); if (remote.indexOf(d) < 0) return out("קודם תחזור לנס ציונה. (סע חזרה)"); }
+  if (remote.indexOf(d) >= 0) {
+    if (l !== "yard" && remote.indexOf(l) < 0) return out("הרכב חונה בחצר.");
+    if (d === "south" && !f.listing) return out("דרומה? אין לך שום סיבה לנסוע לשם.");
+    if (d === l) return out("אתה כבר כאן.");
+    out(d === "south" ? "נסיעה ארוכה דרומה, בחושך." + (f.shalevJoin ? " שלו מדבר כל הדרך על ספסרים." : "") : "נסיעה קצרה בכביש ריק.");
+    return moveTo(d, d === "south" ? 45 : 25);
+  }
+  if (d === l) return out("אתה כבר כאן.");
+  if (d === "stairs") { if (l === "shelter") return moveTo("stairs"); if (l !== "yard") return out("מכאן אי אפשר להגיע לשם."); if (!f.stairs) return out("אתה לא רואה מדרגות."); return moveTo("stairs"); }
+  if (d === "shelter") { if (l === "yard" && f.stairs) return moveTo("stairs"); if (l !== "stairs") return out(f.stairs ? "המקלט למטה, דרך המדרגות שבחצר." : "מקלט? איפה?"); if (!f.doorOpen) return out("דלת הפלדה נעולה. האפל 1 שעליה הוא המנעול."); return moveTo("shelter"); }
+  if (l === "stairs" || l === "shelter") { if (d === "yard") return moveTo("yard"); if (d === "salon") { out("אתה עולה במדרגות, חוצה את החצר ונכנס."); return moveTo("salon", 2); } return out("קודם תעלה לחצר."); }
+  if (d === "salon") return moveTo("salon");
+  if (l === "salon") return moveTo(d);
+  out("מכאן צריך לעבור דרך הסלון.");
+}
+function inv() { if (!S.inv.length) return out("אין לך כלום. הגעת למפגש בידיים ריקות."); out("אתה מחזיק:\n" + S.inv.map(function (i) { return "· " + INAME[i]; }).join("\n")); }
+function help() {
+  out("איך משחקים", "big");
+  out("מקלידים פקודה קצרה בעברית, פועל ואחריו שם:\n· הבט · מלאי · רמז\n· לך מטבח · סע פתח תקווה · סע חזרה\n· דבר רמי · הקשב\n· בדוק מחשב · קח פלאג\n· חבר פלאג · הזז מתג · פתח קובץ · הלחם · חייג\n· בקש כבל (מאלכס כשאתה אצלו, אחרת מיונתן)\n· קטלוג ליסה (צריך קודם לקבל את הקטלוג)\n· תמונה – להציג או להסתיר את הגרפיקה\n· מחדש – להתחיל מהתחלה");
+  sys("כדאי לדבר עם כולם, ויותר מפעם אחת. המשחק נשמר אוטומטית בדפדפן הזה.");
+}
+function hint() {
+  var f = F(), h; S.hints++;
+  if (!has("catalog")) h = "דבר עם אודי בסלון.";
+  else if (!f.iicOn) h = has("psu") ? "חבר את הספק ל-IIc בסלון." : "ה-IIc צריך ספק כוח. מישהו במטבח מסתובב עם אחד.";
+  else if (!f.decoded && !f.d1) h = "השורות על המסך הן עברית שמוצגת כאנגלית קטנה. גיל (בחדר האוסף) נותן טבלה, ושלו (בסלון) יודע לשחרר את המתג.";
+  else if (!f.d1 && !f.d2) h = "קח את הפלאג מהשולחן בסלון, וחבר אותו.";
+  else if (!f.frozen && !f.d2) h = "פתח את הקובץ.";
+  else if (!f.recipe) h = "מי שתכנן את ההגנה יושב בסלון ואוהב לספר. הקשב לו שלוש פעמים.";
+  else if (!f.gotCase) h = !f.shalevJoin ? "אלכס מצא מודעה. דבר עם שלו, הוא ירצה לבוא דרומה." : !has("dispute") ? "במטבח יש מי שמכיר את תקנון איביי." : "סע דרומה (מהחצר) והשתמש במחלוקת.";
+  else if (!f.caseOpen) h = "בדוק את המארז.";
+  else if (!f.fake) h = "תביא את המארז לסלון ותראה מה קורה.";
+  else if (!has("dongle") && !f.d2) h = "לפלאג האמיתי צריך: הפלאג הגרמני, BC547 מאלכס (בקש bc547), קבל מעידו, נגד מענבר ונגד משלו. את הכול מלחימים אצל עידו.";
+  else if (!f.d2) h = "חבר את הדונגל ל-IIc בסלון.";
+  else if (!f.file) h = "פתח קובץ.";
+  else if (!f.bbsNum) h = "מי זוכר את הימים האפלים? הוא בחצר. צריך לדבר איתו פעמיים.";
+  else if (!f.morse) h = "ב-Model 100 שבחדר האוסף יש מודם. חייג. הסיסמה: לוקסמיט.";
+  else if (!f.knowsShelter) h = "יריב נחשון למד פעם מורס.";
+  else if (!f.stairs) h = "מ-ק-ל ושתי נקודות וקו. משה ראה לאן הלך האיש עם הקרטון. דבר איתו שוב.";
+  else if (!f.yech) h = "על דלת המקלט יש אפל 1 כבוי. יחיאל, בסלון, בנה אחד.";
+  else if (!f.doorOpen) h = "במדרגות: ענה. התשובות בקטלוג: קטלוג אפל 1, קטלוג pc, קטלוג צב.";
+  else if (!f.cartonOpen) h = "איזה קרטון אספן אפל לא יפתח אף פעם? פתח אותו.";
+  else if (!f.scsiOn) h = has("scsi") ? "חבר כבל scsi." : "צריך כבל SCSI. בקש מיונתן, או סע לאלכס ובקש שם.";
+  else h = "הדלק את המק.";
+  sys("רמז: " + h);
+}
+
+/* ---------- גרפיקה: 280×192, קווים בסגנון הרפתקאות Hi-Res ---------- */
+var GFX = (function () {
+  var cv = document.getElementById("pic"), g = cv.getContext("2d"), W = 280, H = 192, PH = "#7dff7a", BG = "#050b05", GK = "plug1986.gfx";
+  var OPS = [], last = null, anim = 0, on = true;
+  try { on = localStorage.getItem(GK) !== "off"; } catch (e) {}
+  var FONT = { A:"010101111101101", B:"110101110101110", C:"011100100100011", D:"110101101101110", E:"111100110100111", F:"111100110100100", G:"011100101101011", H:"101101111101101", I:"111010010010111", J:"001001001101010", K:"101101110101101", L:"100100100100111", M:"101111111101101", N:"110101101101101", O:"010101101101010", P:"110101110100100", Q:"010101101110011", R:"110101110101101", S:"011100010001110", T:"111010010010010", U:"101101101101111", V:"101101101101010", W:"101101111111101", X:"101101010101101", Y:"101101010010010", Z:"111001010100111",
+    "0":"111101101101111", "1":"010110010010111", "2":"110001010100111", "3":"110001010001110", "4":"101101111001001", "5":"111100110001110", "6":"011100111101111", "7":"111001010010010", "8":"111101111101111", "9":"111101111001110",
+    "/":"001001010100100", "-":"000000111000000", ".":"000000000000010", "@":"010101111100011", "\\":"100100010001001", " ":"000000000000000" };
+  var PAT = { s:function () { return true; }, h:function (x, y) { return ((x + y) & 1) === 0; }, q:function (x, y) { return !(x & 1) && !(y & 1); },
+    e:function (x, y) { return x % 4 === 0 && !(y & 1); }, dust:function (x, y) { var h = (x * 374761393 + y * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) & 15) === 0; }, wood:function (x, y) { return y % 3 === 0 && (x + (y >> 1)) % 3 !== 0; } };
+
+  /* פיקסלים */
+  function px(x, y) { x = Math.round(x); y = Math.round(y); if (x >= 0 && x < W && y >= 0 && y < H) g.fillRect(x, y, 1, 1); }
+  function line(x0, y0, x1, y1, dot) {
+    x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
+    var dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1, dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1, e = dx + dy, n = 0;
+    for (;;) { if (!dot || (n++ & 1) === 0) px(x0, y0); if (x0 === x1 && y0 === y1) break; var e2 = 2 * e; if (e2 >= dy) { e += dy; x0 += sx; } if (e2 <= dx) { e += dx; y0 += sy; } }
+  }
+  function inPoly(x, y, p) { var c = false; for (var i = 0, j = p.length - 1; i < p.length; j = i++) { var xi = p[i][0], yi = p[i][1], xj = p[j][0], yj = p[j][1]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; }
+  function fillPoly(p, f, ex) {
+    var x0 = W, y0 = H, x1 = 0, y1 = 0; p.forEach(function (q) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); });
+    for (var y = Math.floor(y0); y <= y1; y++) for (var x = Math.floor(x0); x <= x1; x++) if (inPoly(x + .5, y + .5, p) && f(x, y) && !(ex && ex(x, y))) px(x, y);
+  }
+  function fillEll(cx, cy, rx, ry, f) { for (var y = Math.floor(cy - ry); y <= cy + ry; y++) for (var x = Math.floor(cx - rx); x <= cx + rx; x++) { var a = (x - cx) / rx, b = (y - cy) / ry; if (a * a + b * b <= 1 && f(x, y)) px(x, y); } }
+
+  /* פקודות ציור (נרשמות ומנוגנות בהדרגה) */
+  function op(fn) { OPS.push(fn); }
+  function bg(fn) { return function () { g.fillStyle = BG; fn(); g.fillStyle = PH; }; }
+  function L(a, b, c, d, dot) { op(function () { line(a, b, c, d, dot); }); }
+  function Pl(p, closed, dot) { op(function () { for (var i = 0; i < p.length - 1; i++) line(p[i][0], p[i][1], p[i + 1][0], p[i + 1][1], dot); if (closed) line(p[p.length - 1][0], p[p.length - 1][1], p[0][0], p[0][1], dot); }); }
+  function rp(x, y, w, h) { return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]; }
+  function R(x, y, w, h) { Pl(rp(x, y, w, h), true); }
+  function Kr(x, y, w, h) { op(bg(function () { g.fillRect(x, y, w + 1, h + 1); })); }
+  function Kp(p) { op(bg(function () { fillPoly(p, PAT.s); })); }
+  function Kc(cx, cy, r) { op(bg(function () { fillEll(cx, cy, r + .5, r + .5, PAT.s); })); }
+  function Dp(p, pat, ex) { op(function () { fillPoly(p, PAT[pat], ex); }); }
+  function Dr(x, y, w, h, pat) { Dp(rp(x, y, w, h), pat); }
+  function De(cx, cy, rx, ry, pat) { op(function () { fillEll(cx, cy, rx, ry, PAT[pat]); }); }
+  function A(cx, cy, rx, ry, a0, a1, dot) { op(function () { var st = 1 / Math.max(rx, ry, 1) / 1.5, n = 0, lx, ly; for (var a = a0; a <= a1 + 1e-9; a += st) { var x = Math.round(cx + rx * Math.cos(a)), y = Math.round(cy + ry * Math.sin(a)); if (x === lx && y === ly) continue; lx = x; ly = y; if (!dot || (n++ & 1) === 0) px(x, y); } }); }
+  function E(cx, cy, rx, ry, dot) { A(cx, cy, rx, ry, 0, Math.PI * 2, dot); }
+  function C(cx, cy, r) { E(cx, cy, r, r); }
+  function Dt(list) { op(function () { list.forEach(function (q) { px(q[0], q[1]); }); }); }
+  function T(x, y, s) { op(function () { s.split("").forEach(function (ch, i) { var b = FONT[ch] || FONT[" "]; for (var k = 0; k < 15; k++) if (b[k] === "1") px(x + i * 4 + k % 3, y + Math.floor(k / 3)); }); }); }
+  function Tc(cx, y, s) { T(Math.round(cx - (s.length * 4 - 1) / 2), y, s); }
+
+  /* אובייקטים חוזרים */
+  function room() { R(40, 20, 200, 110); L(0, 0, 40, 20); L(279, 0, 240, 20); L(0, 174, 40, 130); L(279, 174, 240, 130); }
+  function mac(x, y, w, h) { Kr(x, y, w, h); R(x, y, w, h); R(x + Math.round(w * .16), y + Math.round(h * .12), Math.round(w * .68), Math.round(h * .42)); L(x + Math.round(w * .5), y + Math.round(h * .7), x + Math.round(w * .82), y + Math.round(h * .7)); L(x, y + Math.round(h * .88), x + w, y + Math.round(h * .88)); }
+  function carton(x, y, w, h, l1, l2, tape) {
+    Kp([[x, y], [x + 6, y - 6], [x + w + 6, y - 6], [x + w + 6, y + h - 6], [x + w, y + h], [x, y + h]]);
+    R(x, y, w, h); Pl([[x, y], [x + 6, y - 6], [x + w + 6, y - 6], [x + w, y]]); L(x + w + 6, y - 6, x + w + 6, y + h - 6); L(x + w, y + h, x + w + 6, y + h - 6);
+    if (l1) Tc(x + w / 2, y + Math.round(h / 2) - (l2 ? 6 : 2), l1);
+    if (l2) Tc(x + w / 2, y + Math.round(h / 2) + 1, l2);
+    if (tape) { var m = x + Math.round(w / 2); L(m - 2, y, m + 4, y - 6); L(m + 2, y, m + 8, y - 6); L(m - 2, y, m - 2, y + 4); L(m + 2, y, m + 2, y + 4); }
+  }
+  function glyph(x, y, k) {
+    if (k % 3 === 0) { R(x, y, 4, 5); L(x, y + 2, x + 4, y + 2); }
+    else if (k % 3 === 1) { L(x + 2, y, x + 2, y + 5); L(x, y + 1, x + 4, y + 1); L(x + 2, y + 2, x, y + 5); L(x + 2, y + 2, x + 4, y + 5); }
+    else { L(x, y, x + 4, y); L(x + 1, y + 2, x + 3, y + 2); L(x, y + 5, x + 4, y + 5); }
+  }
+  function iic(x, y, f) {
+    Kr(x, y, 26, 26); R(x, y + 18, 26, 8); L(x + 3, y + 21, x + 23, y + 21); L(x + 3, y + 23, x + 23, y + 23);
+    R(x + 3, y, 20, 17); R(x + 6, y + 3, 14, 11);
+    if (!f.iicOn) return;
+    if (f.d1 || f.d2) { R(x + 8, y + 5, 10, 7); L(x + 10, y + 7, x + 16, y + 7); L(x + 10, y + 9, x + 15, y + 9); }
+    else { L(x + 8, y + 6, x + 17, y + 6, !f.decoded); L(x + 8, y + 9, x + 15, y + 9, !f.decoded); Dt([[x + 8, y + 12], [x + 9, y + 12]]); }
+  }
+
+  /* סצנות */
+  var SC = {
+    salon: function (f) {
+      room();
+      R(62, 34, 46, 36); L(85, 34, 85, 70); L(62, 52, 108, 52); Dt([[70, 40], [99, 44], [76, 61], [94, 64]]);
+      R(170, 40, 40, 28); Pl([[172, 64], [182, 50], [190, 58], [198, 46], [208, 64]]);
+      L(140, 0, 140, 8); Pl([[132, 16], [136, 8], [144, 8], [148, 16]], true); L(128, 20, 121, 28, 1); L(152, 20, 159, 28, 1);
+      var top = [[72, 118], [198, 118], [222, 142], [48, 142]];
+      Dp(top, "dust", function (x, y) { var a = (x - 135) / 19, b = (y - 129) / 6.5; return a * a + b * b <= 1; });
+      Pl(top, true); E(135, 129, 19, 6, 1);
+      L(48, 145, 222, 145); L(48, 142, 48, 145); L(222, 142, 222, 145); L(54, 145, 54, 178); L(216, 145, 216, 178); L(84, 145, 84, 162); L(186, 145, 186, 162);
+      Pl([[78, 121], [108, 121], [112, 128], [74, 128]], true); L(74, 130, 112, 130); L(74, 128, 74, 130); L(112, 128, 112, 130);
+      Kp([[158, 121], [160, 104], [186, 104], [188, 121]]); Pl([[158, 121], [160, 104], [186, 104], [188, 121]], true);
+      Pl([[158, 121], [188, 121], [192, 128], [154, 128]], true); A(173, 125, 10, 2, Math.PI, Math.PI * 2); L(163, 125, 183, 125);
+      if (!(has("plug") || f.d1 || f.gotPlug)) { R(158, 133, 6, 4); Dt([[160, 135], [162, 135]]); Pl([[164, 135], [170, 137], [176, 136]]); }
+      Pl([[220, 118], [262, 118], [266, 124], [216, 124]], true); L(220, 124, 220, 164); L(262, 124, 262, 164); L(241, 124, 241, 154);
+      iic(228, 92, f);
+    },
+    kitchen: function () {
+      room();
+      L(125, 0, 125, 8); C(125, 12, 4); L(116, 12, 112, 12); L(134, 12, 138, 12); L(119, 18, 116, 21); L(131, 18, 134, 21); L(125, 18, 125, 22);
+      R(48, 28, 96, 28); L(80, 28, 80, 56); L(112, 28, 112, 56); Dt([[77, 42], [83, 42], [109, 42], [115, 42]]);
+      Pl([[44, 100], [200, 100], [196, 92], [48, 92]], true); R(44, 100, 156, 30);
+      [48, 86, 124, 162].forEach(function (x) { R(x, 104, 34, 22); }); Dt([[79, 115], [89, 115], [155, 115], [165, 115]]);
+      Kr(56, 64, 22, 28); R(56, 64, 22, 28); R(60, 68, 14, 7); Dt([[62, 71], [64, 71], [66, 71]]); L(67, 78, 67, 83); R(62, 85, 10, 6);
+      Pl([[67, 61], [65, 57], [69, 53], [66, 48]], false, 1); Pl([[72, 60], [71, 56], [74, 52]], false, 1);
+      Kp([[112, 80], [150, 80], [154, 86], [154, 93], [108, 93], [108, 86]]); Pl([[112, 80], [150, 80], [154, 86], [108, 86]], true); R(108, 86, 46, 7); T(121, 87, "PIZZA");
+      Pl([[126, 77], [124, 73], [127, 69]], false, 1); Pl([[136, 77], [134, 73], [137, 69]], false, 1);
+      R(204, 28, 32, 102); L(204, 62, 236, 62); L(208, 40, 208, 54); L(208, 68, 208, 92);
+    },
+    coll: function () {
+      room();
+      [48, 78, 108].forEach(function (y) { L(40, y, 240, y); L(40, y + 2, 240, y + 2); });
+      L(0, 44, 40, 48); L(0, 92, 40, 78); L(0, 139, 40, 108); L(279, 44, 240, 48); L(279, 92, 240, 78); L(279, 139, 240, 108);
+      mac(48, 27, 16, 21); mac(68, 27, 16, 21); mac(88, 27, 16, 21);
+      Dr(118, 30, 18, 18, "h"); R(118, 30, 18, 18); R(150, 22, 14, 26); L(153, 28, 161, 28); L(153, 32, 161, 32);
+      R(176, 34, 30, 14); L(190, 40, 202, 40); R(212, 30, 20, 18); R(215, 33, 14, 10);
+      R(56, 58, 34, 12); T(67, 62, "IIE"); Pl([[54, 78], [92, 78], [90, 70], [56, 70]], true); Dt([[60, 74], [64, 74], [68, 74], [72, 74], [76, 74], [80, 74], [84, 74]]);
+      R(108, 52, 52, 26); R(112, 55, 22, 17); L(140, 58, 154, 58); L(140, 63, 154, 63); T(140, 69, "LISA");
+      R(180, 64, 40, 14); L(184, 71, 216, 71); R(226, 66, 10, 12);
+      R(48, 94, 24, 14); R(76, 98, 30, 10); R(112, 92, 22, 16); R(115, 95, 16, 8); R(140, 96, 40, 12); R(186, 90, 18, 18); R(210, 98, 26, 10);
+      Pl([[64, 140], [216, 140], [234, 160], [46, 160]], true); L(46, 163, 234, 163); L(46, 160, 46, 163); L(234, 160, 234, 163); L(52, 163, 52, 186); L(228, 163, 228, 186);
+      Pl([[112, 144], [162, 144], [166, 152], [108, 152]], true); Dp([[116, 145], [158, 145], [159, 147], [115, 147]], "h");
+      Dt([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(function (i) { return [115 + i * 5, 150]; }));
+      Pl([[166, 148], [196, 150], [226, 140], [252, 122]]); R(251, 116, 6, 6);
+      if (!has("pcable")) { C(84, 150, 5); C(86, 150, 3); Pl([[90, 152], [96, 155], [100, 153]]); }
+    },
+    yard: function (f) {
+      Dt([[20, 10], [46, 24], [70, 8], [200, 14], [226, 36], [120, 5], [160, 22], [12, 40], [268, 50], [92, 30]]);
+      De(250, 20, 9, 9, "q"); C(250, 20, 9);
+      R(140, 20, 10, 18);
+      var roof = [[22, 48], [105, 14], [188, 48]]; Kp(roof); Dp(roof, "e"); Pl(roof, true);
+      R(30, 48, 150, 92);
+      [44, 136].forEach(function (x) { Dr(x + 1, 67, 28, 22, "q"); R(x, 66, 30, 24); L(x + 15, 66, x + 15, 90); L(x, 78, x + 30, 78); });
+      R(94, 92, 24, 48); C(113, 117, 1);
+      L(0, 140, 279, 140); L(0, 158, 279, 158); L(0, 162, 279, 162); L(98, 140, 92, 158); L(114, 140, 120, 158);
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].forEach(function (i) { L(i * 30 + 4, 180, i * 30 + 18, 180); });
+      Kc(186, 128, 11); C(186, 128, 11); Kc(199, 121, 12); C(199, 121, 12); Kc(212, 129, 10); C(212, 129, 10); De(199, 126, 20, 10, "e");
+      if (f.stairs) { Dr(218, 141, 26, 14, "q"); R(218, 141, 26, 14); Kr(221, 144, 20, 9); L(221, 145, 241, 145); L(224, 149, 238, 149); L(227, 153, 235, 153); }
+      var car = [[192, 152], [204, 138], [238, 138], [250, 150], [268, 152], [268, 166], [190, 166]];
+      Kp(car); Pl(car, true); Pl([[208, 141], [221, 141], [221, 150], [200, 150]], true); Pl([[224, 141], [236, 141], [245, 150], [224, 150]], true); L(262, 156, 266, 156);
+      Kc(206, 166, 7); C(206, 166, 7); C(206, 166, 2); Kc(252, 166, 7); C(252, 166, 7); C(252, 166, 2);
+    },
+    pt: function () {
+      room();
+      L(118, 191, 130, 130, 1); L(162, 191, 150, 130, 1);
+      carton(44, 110, 30, 20); glyph(52, 117, 0); glyph(60, 117, 1);
+      carton(44, 90, 30, 20); glyph(52, 97, 2); glyph(60, 97, 0);
+      carton(44, 70, 30, 20); glyph(56, 77, 1);
+      carton(84, 104, 26, 26); glyph(92, 114, 2);
+      Kr(154, 104, 34, 24); R(154, 104, 34, 24); R(157, 107, 15, 13); L(176, 110, 185, 110); L(176, 115, 185, 115);
+      carton(214, 104, 22, 26); glyph(222, 114, 0);
+      carton(178, 140, 64, 40); glyph(190, 152, 0); glyph(200, 152, 1); glyph(210, 152, 2); glyph(220, 152, 1);
+      var dog = [[190, 110], [198, 108], [202, 104], [204, 94], [207, 104], [210, 108], [214, 114], [222, 122], [228, 132], [230, 137], [200, 137], [199, 126], [197, 118], [194, 114], [190, 113]];
+      Kp(dog); Dp(dog, "h"); Pl(dog, true); Kr(198, 108, 2, 1); L(205, 137, 206, 124); L(230, 135, 238, 130);
+      Kr(48, 126, 46, 28); R(48, 126, 46, 28); R(52, 129, 38, 22); L(71, 154, 71, 160); Pl([[59, 160], [83, 160], [87, 166], [55, 166]], true);
+      Kc(62, 121, 6); E(62, 121, 8, 5); Pl([[56, 118], [56, 113], [60, 117]]); A(62, 122, 10, 6, .3, 1.5);
+      Kc(84, 121, 6); E(84, 121, 8, 5); Pl([[89, 117], [92, 113], [92, 118]]);
+      T(98, 110, "Z"); T(103, 104, "Z"); T(108, 98, "Z");
+    },
+    hod: function () {
+      room();
+      R(50, 40, 50, 60); [1, 2, 3, 4].forEach(function (i) { L(50, 40 + i * 12, 100, 40 + i * 12); }); L(67, 40, 67, 100); L(84, 40, 84, 100);
+      var kn = []; for (var r = 0; r < 5; r++) for (var c = 0; c < 3; c++) kn.push([58 + c * 17, 46 + r * 12]); Dt(kn);
+      L(150, 62, 236, 62); L(150, 64, 236, 64); L(160, 64, 166, 70); L(226, 64, 220, 70);
+      R(160, 48, 36, 14); Pl([[160, 48], [154, 36], [190, 36], [196, 48]], true); C(170, 55, 4); R(180, 52, 3, 7); R(186, 52, 3, 7);
+      Pl([[50, 128], [230, 128], [250, 150], [30, 150]], true); L(30, 153, 250, 153); L(30, 150, 30, 153); L(250, 150, 250, 153); L(36, 153, 36, 186); L(244, 153, 244, 186);
+      Kr(60, 100, 40, 28); R(60, 100, 40, 28); R(64, 104, 24, 18);
+      var sw = []; for (var x = 0; x <= 23; x++) sw.push([65 + x, 113 - Math.round(6 * Math.sin(x / 23 * Math.PI * 4))]); Dt(sw);
+      C(94, 108, 2); C(94, 118, 2);
+      Kr(118, 114, 26, 14); R(118, 114, 26, 14); R(122, 117, 8, 5); C(138, 121, 2);
+      L(150, 127, 178, 110); L(151, 128, 179, 111); Pl([[144, 124], [148, 129], [151, 128]]); Pl([[181, 107], [179, 103], [182, 99], [180, 95]], false, 1);
+      Kr(192, 98, 40, 30); R(192, 98, 40, 30); Dr(197, 102, 28, 12, "h"); R(196, 101, 30, 14); T(206, 119, "BGA");
+    },
+    south: function (f) {
+      L(0, 0, 30, 30); L(279, 0, 250, 30); Pl([[30, 30], [140, 10], [250, 30]]); L(85, 20, 85, 30); L(195, 20, 195, 30);
+      R(30, 30, 220, 100); for (var x = 38; x < 250; x += 8) L(x, 32, x, 128, 1);
+      L(0, 172, 30, 130); L(279, 172, 250, 130);
+      Kr(136, 40, 8, 12); L(140, 10, 140, 43); C(140, 47, 3); L(132, 52, 128, 56, 1); L(148, 52, 152, 56, 1);
+      Kr(150, 61, 90, 3); L(150, 62, 240, 62); L(150, 64, 240, 64); L(160, 64, 166, 70); L(230, 64, 224, 70);
+      if (!(has("pcase") || f.gotCase)) { mac(186, 30, 24, 32); Dr(190, 55, 9, 3, "h"); L(215, 64, 215, 68); Kr(206, 68, 20, 9); R(206, 68, 20, 9); T(209, 70, "7777"); }
+      Kp([[56, 124], [124, 124], [132, 142], [40, 142], [40, 145], [132, 145]]);
+      Pl([[56, 124], [124, 124], [132, 142], [40, 142]], true); L(40, 145, 132, 145); L(44, 145, 44, 176); L(128, 145, 128, 176);
+      Kp([[156, 124], [224, 124], [240, 142], [148, 142], [148, 145], [240, 145]]);
+      Pl([[156, 124], [224, 124], [240, 142], [148, 142]], true); L(148, 145, 240, 145); L(152, 145, 152, 176); L(236, 145, 236, 176);
+      [0, 1, 2, 3, 4].forEach(function (i) { var x = 52 + i * 15; Kr(x, 112, 10, 12); R(x, 114, 10, 10); L(x + 3, 114, x + 5, 111); L(x + 7, 114, x + 5, 111); Dr(x + 2, 120, 5, 2, "h"); });
+      Kr(160, 102, 28, 22); R(160, 102, 28, 22); R(163, 105, 18, 14); C(172, 112, 4);
+      mac(198, 98, 20, 26);
+    },
+    stairs: function (f) {
+      var lw = [[0, 0], [100, 10], [100, 120], [0, 191]], rw = [[279, 0], [180, 10], [180, 120], [279, 191]];
+      Dp(lw, "dust"); Dp(rw, "dust"); L(0, 0, 100, 10); L(279, 0, 180, 10); L(0, 191, 100, 120); L(279, 191, 180, 120);
+      R(100, 10, 80, 110);
+      for (var i = 1; i < 8; i++) { var y = 192 - i * 9, d = (192 - y) * 100 / 72; L(d, y, 279 - d, y); L(d + 2, y + 2, 277 - d, y + 2, 1); }
+      if (!f.doorOpen) {
+        R(106, 16, 68, 104); Dt([[109, 19], [171, 19], [109, 117], [171, 117], [109, 68], [171, 68]]); R(166, 64, 4, 10);
+        Kr(124, 22, 32, 16); R(124, 22, 32, 16); R(126, 24, 28, 12); T(f.yech ? 130 : 130, 28, f.yech ? "\\" : "@@@@@");
+        if (f.yech) Dr(134, 28, 2, 4, "s");
+        Kr(118, 42, 44, 40); Dr(118, 42, 44, 40, "wood"); R(118, 42, 44, 40); Kr(122, 46, 36, 32); R(122, 46, 36, 32);
+        Dr(124, 48, 32, 17, "q");
+        for (var r = 0; r < 3; r++) for (var j = 0; j < 4; j++) { Kr(126 + j * 7, 49 + r * 5, 5, 3); R(126 + j * 7, 49 + r * 5, 5, 3); }
+        R(124, 68, 32, 7); var ks = []; for (var k = 0; k < 9; k++) { ks.push([127 + k * 3, 70]); ks.push([128 + k * 3, 72]); } Dt(ks);
+      } else {
+        Dp(rp(106, 16, 68, 104), "h"); Kc(150, 42, 9); C(150, 42, 3); L(150, 16, 150, 38); L(141, 48, 137, 52, 1); L(159, 48, 163, 52, 1);
+        Kr(122, 92, 52, 28); Pl([[122, 100], [174, 100]]); L(122, 100, 106, 120); Dt([[140, 108], [150, 112], [160, 106], [132, 114]]);
+        var slab = [[106, 16], [122, 26], [122, 112], [106, 120]]; Kp(slab); Pl(slab, true); R(110, 46, 8, 26); Dr(111, 47, 7, 25, "wood");
+      }
+    },
+    shelter: function (f) {
+      room(); Dr(41, 21, 198, 108, "dust");
+      Kc(140, 15, 7); L(140, 0, 140, 10); C(140, 15, 4); L(131, 21, 126, 26, 1); L(149, 21, 154, 26, 1); L(140, 22, 140, 30, 1);
+      carton(52, 98, 44, 32, "20TH", "MAC");
+      carton(114, 102, 40, 28, "NEXT");
+      carton(174, 96, 54, 34, "IBM", "PS/2", !f.cartonOpen);
+      if (f.cartonOpen) {
+        var bf = [[180, 90], [186, 78], [238, 78], [232, 90]]; Kp(bf); Pl(bf, true);
+        var ff = [[174, 96], [228, 96], [231, 106], [171, 106]]; Kp(ff); Pl(ff, true);
+        Pl([[184, 92], [192, 88], [200, 92], [208, 88], [216, 92], [224, 88]], false, 1);
+        mac(92, 144, 26, 34);
+        Kr(138, 164, 40, 14); R(138, 164, 40, 14); L(142, 174, 156, 174); Dt([[172, 168], [173, 168]]);
+        if (f.scsiOn) { Pl([[118, 170], [124, 182], [132, 185], [140, 178]]); Pl([[119, 172], [125, 183], [133, 186], [141, 179]]); }
+      }
+    },
+    end: function () {
+      L(10, 150, 270, 150);
+      Kr(76, 10, 96, 128); R(76, 10, 96, 128); R(88, 22, 72, 56); L(89, 29, 159, 29);
+      L(92, 25, 95, 25); L(101, 25, 108, 25); L(114, 25, 121, 25); L(127, 25, 132, 25);
+      R(114, 37, 8, 3); Dr(115, 41, 21, 13, "q"); R(114, 40, 22, 14); Tc(124, 59, "APRIL 1986");
+      L(76, 120, 172, 120); L(132, 100, 158, 100); L(132, 102, 158, 102); R(84, 138, 80, 12);
+      A(70, 46, 8, 12, 2.2, 4.1, 1); A(70, 46, 15, 21, 2.3, 4.0, 1); A(70, 46, 22, 30, 2.35, 3.95, 1);
+      Pl([[172, 112], [180, 118], [186, 112], [192, 116]]);
+      Kr(192, 104, 54, 30); R(192, 104, 54, 30); Tc(219, 112, "SCSI"); L(198, 126, 216, 126); Dt([[238, 127], [239, 127]]);
+      [[20, 30], [36, 60], [240, 30], [258, 70], [220, 60], [30, 100], [262, 100]].forEach(function (q) { L(q[0] - 2, q[1], q[0] + 2, q[1]); L(q[0], q[1] - 2, q[0], q[1] + 2); });
+    }
+  };
+  var NAMES = { salon:"הסלון של רמי", kitchen:"המטבח", coll:"חדר האוסף", yard:"החצר הקדמית", pt:"הדירה של אלכס", hod:"המעבדה של עידו", south:"המחסן בדרום", stairs:"מדרגות המקלט", shelter:"המקלט", end:"המק נדלק" };
+
+  function sceneKey() {
+    if (S.over) return "end";
+    var f = S.f, l = S.loc, k = [l];
+    if (l === "salon") k.push(!(has("plug") || f.d1 || f.gotPlug), !!f.iicOn, !!f.decoded, !!(f.d1 || f.d2));
+    if (l === "coll") k.push(has("pcable"));
+    if (l === "yard") k.push(!!f.stairs);
+    if (l === "south") k.push(has("pcase") || !!f.gotCase);
+    if (l === "stairs") k.push(!!f.doorOpen, !!f.yech);
+    if (l === "shelter") k.push(!!f.cartonOpen, !!f.scsiOn);
+    return k.join("|");
+  }
+  function play() {
+    cancelAnimationFrame(anim);
+    g.fillStyle = BG; g.fillRect(0, 0, W, H); g.fillStyle = PH;
+    var ops = OPS, i = 0, instant = false;
+    try { instant = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+    if (instant) { ops.forEach(function (o) { o(); }); return; }
+    var per = Math.max(1, Math.ceil(ops.length / 45));
+    (function step() { for (var k = 0; k < per && i < ops.length; k++) ops[i++](); if (i < ops.length) anim = requestAnimationFrame(step); })();
+  }
+  function draw() {
+    cv.hidden = !on; if (!on || !S) return;
+    var k = sceneKey(); if (k === last) return; last = k;
+    var id = k.split("|")[0]; OPS = []; SC[id](S.f); play();
+    cv.setAttribute("aria-label", "תמונה: " + (NAMES[id] || ""));
+  }
+  function toggle() {
+    on = !on; try { localStorage.setItem(GK, on ? "on" : "off"); } catch (e) {}
+    last = null; sys(on ? "גרפיקה: מופעלת." : "גרפיקה: כבויה. רק טקסט, כמו פעם."); draw();
+  }
+  return { draw:draw, toggle:toggle, scenes:SC, _force:function () { last = null; } };
+})();
+
+/* ---------- מפענח ---------- */
+function personFromTokens() {
+  var l = S.loc, ids = ["rami","udi","eitan","yechiel","shalev","dimant","dahan","sharon","nir","inbar","gil","nachshon","dragon","moshe","alex","ido","jon","mefarek"];
+  for (var i = 0; i < ids.length; i++) if (t(ids[i])) return ids[i];
+  if (t("david")) return l === "kitchen" ? "dahan" : "dimant";
+  if (t("yariv")) return l === "coll" ? "nachshon" : "dragon";
+  return null;
+}
+function run(raw) {
+  raw = raw.trim(); if (!raw || locked) return;
+  out(raw, "you");
+  if (S.over) { if (/מחדש/.test(raw)) return restart(); return sys("המשחק נגמר. הקלד מחדש כדי לשחק שוב."); }
+  if (S.mode === "bbs") { bbs(raw); return fin(); }
+  if (S.mode === "guard") { guard(raw); return fin(); }
+  T = norm(raw); if (!T.length) return;
+  var v = verbOf(T[0]);
+  S.n++; tick(1);
+  if (!v) { var p0 = personFromTokens(); if (p0) v = "talk"; else if (t("catalog")) v = "cat"; else { out("לא הבנתי. הקלד עזרה כדי לראות אילו פקודות יש.", "err"); return fin(); } }
+  switch (v) {
+    case "look": look(); break;
+    case "go": go(false); break;
+    case "drive": go(true); break;
+    case "exam": exam(); break;
+    case "take": take(); break;
+    case "talk": var p = personFromTokens(); if (p) talk(p); else out("עם מי?"); break;
+    case "use": use(); break;
+    case "give": use(); break;
+    case "listen": listen(); break;
+    case "type": typeCmd(); break;
+    case "ask": ask(); break;
+    case "inv": inv(); break;
+    case "cat": catalog(); break;
+    case "help": help(); break;
+    case "hint": hint(); break;
+    case "restart": return restart();
+    case "gfx": GFX.toggle(); break;
+  }
+  fin();
+}
+function fin() { showClock(); save(); GFX.draw(); }
+function intro() {
+  out("תעלומת הפלאג האחרון", "big");
+  sys("משחק הרפתקאות טקסט · סיבית בדיונית בע״מ · 1984 בערך");
+  out("נס ציונה. ערב מפגש. 40 שנה לכלבו 123.");
+  out("הצטרפת לקבוצה ״Israeli Apple Retro enthusiasts״ רק אתמול, וזה המפגש הראשון שלך. במרכז הסלון עמד ה-Mac Plus מ״סיבית״, עם הדיסק החיצוני, ואיתן עמד לספר סוף סוף על הפרשה מאפריל 1986.");
+  out("באמצע הפיצה נשרף נגד. החשמל נפל. וכשהאור חזר, המק והדיסק לא היו שם.");
+  out("נשארו רק פלאג DIN5 יצוק באפוקסי, ושורת ג'יבריש על מסך ה-IIc של אודי.");
+  out("כולם מסתכלים עליך. אתה היחיד כאן שאף אחד עוד לא חושד בו.");
+  sys("(הקלד עזרה להסבר, או פשוט התחל: הבט)");
+  look();
+}
+function restart() { wipe(); S = fresh(); outEl.innerHTML = ""; intro(); fin(); }
+
+document.getElementById("f").addEventListener("submit", function (e) { e.preventDefault(); var v = inEl.value; inEl.value = ""; run(v); });
+document.getElementById("keys").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b) { run(b.getAttribute("data-c")); inEl.focus(); } });
+window.__run = run; window.__state = function () { return S; };
+
+var old = load();
+if (old && old.loc && !old.over) { S = old; S.mode = null; out("תעלומת הפלאג האחרון", "big"); sys("ממשיכים מהמקום שבו עצרת. (מחדש – להתחיל מהתחלה)"); look(); showClock(); GFX.draw(); }
+else { S = fresh(); intro(); showClock(); GFX.draw(); }
+})();
+</script>
+</body>
+</html>
